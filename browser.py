@@ -1,4 +1,4 @@
-"""Зашифрованный браузер второстепенной ОС. Работает через ядро по токену."""
+"""Браузер DreamUX. Работает через ядро (netd) по токену."""
 
 import os
 import sys
@@ -7,6 +7,8 @@ from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLineEdit, QPushButton,
     QTextEdit, QLabel,
 )
+from PyQt6.QtCore import Qt
+
 
 NETD = None
 log_write = None
@@ -25,20 +27,23 @@ def browser_open(desktop):
     except Exception:
         log_write = lambda *a, **k: None
 
+    from gnome_gui import GnomeWindow
+
     if NETD is None:
-        from gnome_gui import GnomeWindow
-        win = GnomeWindow(desktop, "Браузер", 620, 320, 200, 150)
-        QLabel("⛔ Ядро недоступно.", win.body).pack(pady=30)
+        win = GnomeWindow(desktop, "Браузер", 620, 300, 200, 150)
+        msg = QLabel("Ядро недоступно. Нет соединения с netd.")
+        msg.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        win.body_lay.addWidget(msg)
         return
 
     token = NETD.issue_session("browser", require_vpn=True)
     if not token:
-        from gnome_gui import GnomeWindow
-        win = GnomeWindow(desktop, "Браузер", 620, 320, 200, 150)
-        QLabel("⛔ Ядро отказало в сессии.", win.body).pack(pady=30)
+        win = GnomeWindow(desktop, "Браузер", 620, 300, 200, 150)
+        msg = QLabel("Ядро отказало в сессии.")
+        msg.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        win.body_lay.addWidget(msg)
         return
 
-    from gnome_gui import GnomeWindow
     win = GnomeWindow(desktop, "Браузер (зашифрованный)", 900, 620, 120, 60)
 
     bar = QHBoxLayout()
@@ -54,7 +59,7 @@ def browser_open(desktop):
     bar.addWidget(go)
     win.body_lay.addLayout(bar)
 
-    status = QLabel("🔒 Зашифрованный канал · VPN · токен активен")
+    status = QLabel("Зашифрованный канал · VPN · токен активен")
     status.setStyleSheet("color:#33d17a; padding:4px 8px;")
     win.body_lay.addWidget(status)
 
@@ -69,15 +74,15 @@ def browser_open(desktop):
     def do_request(url):
         if not url.startswith("http"):
             url = "https://" + url
-        status.setText(f"🔒 Запрос: {url}")
+        status.setText(f"Запрос: {url}")
         view.setPlainText("Загрузка...")
         if log_write:
             log_write("browser", "INFO", "Запрос", url=url)
         resp = NETD.request(token=token, method="GET", url=url,
-                            headers={"User-Agent": "SimpleOS-Browser/1.0"})
+                            headers={"User-Agent": "DreamUX-Browser/1.0"})
         if "error" in resp:
-            view.setPlainText(f"⚠ Ошибка: {resp['error']}")
-            status.setText(f"⚠ {resp['error']}")
+            view.setPlainText(f"Ошибка: {resp['error']}")
+            status.setText(f"{resp['error']}")
             if log_write:
                 log_write("browser", "ERROR", "Ошибка",
                           url=url, error=resp["error"])
@@ -87,13 +92,9 @@ def browser_open(desktop):
         except Exception:
             text = f"(бинарный ответ, {len(resp['body'])} байт)"
         view.setPlainText(text)
-        status.setText(f"🔒 {resp['status']} · {len(resp['body'])} байт")
+        status.setText(f"{resp['status']} · {len(resp['body'])} байт")
         history.append(url)
         hi[0] = len(history) - 1
-        if log_write:
-            log_write("browser", "INFO", "Ответ",
-                      url=url, status=resp["status"],
-                      size=len(resp["body"]))
 
     def on_go():
         u = url_edit.text().strip()
@@ -107,12 +108,10 @@ def browser_open(desktop):
         if hi[0] > 0:
             hi[0] -= 1
             do_request(history[hi[0]])
-
     def on_fwd():
         if hi[0] < len(history) - 1:
             hi[0] += 1
             do_request(history[hi[0]])
-
     def on_rel():
         if history:
             do_request(history[hi[0]])
@@ -122,11 +121,10 @@ def browser_open(desktop):
     rel.clicked.connect(on_rel)
 
     orig_close = win.closeEvent
-
     def on_close(e):
         NETD.revoke_session(token)
-        status.setText("🔒 Токен отозван")
+        status.setText("Токен отозван")
         return orig_close(e)
-
     win.closeEvent = on_close
+
     url_edit.setFocus()
