@@ -1,25 +1,25 @@
-"""
-RemoteTools — утилита обслуживания DreamUX.
-Резервное копирование, восстановление, сброс компонентов.
-Запуск: /remote [команда]
-"""
+"""RemoteTools GUI — панель управления компонентами DreamUX."""
 
 import os
 import sys
-import shutil
 import datetime
+import shutil
 import zipfile
 
-from plugins.base import Interface
+from PyQt6.QtWidgets import (
+    QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
+    QTextEdit, QListWidget, QListWidgetItem, QMessageBox,
+    QTabWidget, QInputDialog,
+)
+from PyQt6.QtCore import Qt
 
 
-# ---------- Пути ----------
-PLUGIN_DIR = os.path.dirname(os.path.abspath(__file__))
+HERE = os.path.dirname(os.path.abspath(__file__))
+PLUGIN_DIR = os.path.dirname(HERE)
 KERNEL_DIR = os.path.dirname(PLUGIN_DIR)
 SNAPSHOTS_DIR = os.path.join(KERNEL_DIR, "snapshots")
 SANDBOX_DIR = os.path.join(KERNEL_DIR, "sandbox")
-GNOME_DIR = os.path.join(PLUGIN_DIR, "gnome_gui")
-LOGS_DIR = os.path.join(GNOME_DIR, "logs")
+LOGS_DIR = os.path.join(HERE, "logs")
 CONFIG_DIR = os.path.join(KERNEL_DIR, "config")
 AVDB_DIR = os.path.join(KERNEL_DIR, "avdb")
 
@@ -28,16 +28,8 @@ COMPONENTS = {
     "logs":      LOGS_DIR,
     "config":    CONFIG_DIR,
     "avdb":      AVDB_DIR,
-    "gnome_gui": GNOME_DIR,
+    "gnome_gui": HERE,
 }
-
-
-def _ensure_snapshots():
-    os.makedirs(SNAPSHOTS_DIR, exist_ok=True)
-
-
-def _ts():
-    return datetime.datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
 
 
 def _human_size(n):
@@ -61,228 +53,223 @@ def _dir_size(path):
     return total
 
 
-def _safe_rmtree(path):
-    if os.path.isdir(path):
-        shutil.rmtree(path, ignore_errors=True)
+def _ensure():
+    os.makedirs(SNAPSHOTS_DIR, exist_ok=True)
 
 
-# ============================================================
-# Действия RemoteTools
-# ============================================================
+def remote_tools_open(desktop):
+    try:
+        from gnome_gui import GnomeWindow, log_write
+    except ImportError:
+        from .gnome_gui import GnomeWindow, log_write
 
-def rt_status():
-    print("\n" + "=" * 60)
-    print("  RemoteTools — Состояние DreamUX")
-    print("=" * 60)
-    print(f"  Корень:    {KERNEL_DIR}")
-    print(f"  Снапшоты:  {SNAPSHOTS_DIR}")
-    print()
-    print(f"  {'Компонент':<14} {'Размер':<12} {'Статус':<10} {'Путь'}")
-    print("  " + "-" * 58)
-    for name, path in COMPONENTS.items():
-        if os.path.isdir(path):
-            size = _human_size(_dir_size(path))
-            status = "OK"
+    win = GnomeWindow(desktop, "RemoteTools", 780, 540, 180, 90)
+    tabs = QTabWidget()
+    win.body_lay.addWidget(tabs)
+
+    # --- Вкладка 1: Компоненты ---
+    tab1 = QWidget()
+    t1 = QVBoxLayout(tab1)
+
+    info = QTextEdit()
+    info.setReadOnly(True)
+    info.setStyleSheet(
+        "background:#0d0d0d; color:#e0e0e0; "
+        "font-family:'Consolas','Monospace'; font-size:10pt;"
+    )
+    t1.addWidget(info, 1)
+
+    def refresh_info():
+        lines = ["RemoteTools — состояние DreamUX", "=" * 50, ""]
+        lines.append(f"Корень:    {KERNEL_DIR}")
+        lines.append(f"Снапшоты:  {SNAPSHOTS_DIR}")
+        lines.append("")
+        lines.append(f"{'Компонент':<14} {'Размер':<12} {'Статус'}")
+        lines.append("-" * 40)
+        for name, path in COMPONENTS.items():
+            if os.path.isdir(path):
+                size = _human_size(_dir_size(path))
+                lines.append(f"{name:<14} {size:<12} OK")
+            else:
+                lines.append(f"{name:<14} {'—':<12} НЕТ")
+        lines.append("")
+        _ensure()
+        snaps = sorted(os.listdir(SNAPSHOTS_DIR))
+        lines.append(f"Снапшоты ({len(snaps)}):")
+        if not snaps:
+            lines.append("  (нет)")
         else:
-            size = "—"
-            status = "НЕТ"
-        print(f"  {name:<14} {size:<12} {status:<10} {path}")
+            for s in snaps[-10:]:
+                p = os.path.join(SNAPSHOTS_DIR, s)
+                lines.append(f"  • {s}  ({_human_size(_dir_size(p))})")
+        info.setPlainText("\n".join(lines))
 
-    _ensure_snapshots()
-    snaps = sorted(os.listdir(SNAPSHOTS_DIR))
-    print(f"\n  Снапшоты ({len(snaps)}):")
-    if not snaps:
-        print("    (нет)")
-    else:
-        for s in snaps[-10:]:
-            p = os.path.join(SNAPSHOTS_DIR, s)
-            size = _human_size(_dir_size(p))
-            print(f"    • {s}  ({size})")
-    print("=" * 60 + "\n")
+    refresh_info()
 
-
-def rt_backup(component="full"):
-    _ensure_snapshots()
-    ts = _ts()
-
-    if component == "full":
+    def _backup():
+        _ensure()
+        ts = datetime.datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
         dst = os.path.join(SNAPSHOTS_DIR, f"full_{ts}")
         os.makedirs(dst, exist_ok=True)
         for name, path in COMPONENTS.items():
             if os.path.isdir(path):
                 try:
                     shutil.copytree(path, os.path.join(dst, name))
-                    print(f"[RemoteTools] {name} -> {dst}/{name}")
-                except Exception as e:
-                    print(f"[RemoteTools] Ошибка {name}: {e}")
-        print(f"[RemoteTools] Полный снапшот: {dst}")
-        return dst
+                except Exception:
+                    pass
+        log_write("actions", "INFO", "RemoteTools: полный снапшот", dst=dst)
+        QMessageBox.information(win, "RemoteTools", f"Снапшот создан:\n{dst}")
+        refresh_info()
 
-    if component not in COMPONENTS:
-        print(f"[RemoteTools] Неизвестный компонент: {component}")
-        print(f"Доступно: full, {', '.join(COMPONENTS)}")
-        return None
-
-    src = COMPONENTS[component]
-    if not os.path.isdir(src):
-        print(f"[RemoteTools] Компонент не найден: {src}")
-        return None
-
-    dst = os.path.join(SNAPSHOTS_DIR, f"{component}_{ts}")
-    try:
-        shutil.copytree(src, dst)
-        print(f"[RemoteTools] Снапшот {component}: {dst}")
-        return dst
-    except Exception as e:
-        print(f"[RemoteTools] Ошибка {component}: {e}")
-        return None
-
-
-def rt_restore(component, snapshot_name):
-    _ensure_snapshots()
-    snap_dir = os.path.join(SNAPSHOTS_DIR, snapshot_name)
-    if not os.path.isdir(snap_dir):
-        print(f"[RemoteTools] Снапшот не найден: {snapshot_name}")
-        return False
-
-    if component not in COMPONENTS:
-        print(f"[RemoteTools] Неизвестный компонент: {component}")
-        return False
-
-    if snapshot_name.startswith("full_"):
-        src = os.path.join(snap_dir, component)
-    else:
-        src = snap_dir
-
-    if not os.path.isdir(src):
-        print(f"[RemoteTools] В снапшоте нет '{component}': {src}")
-        return False
-
-    dst = COMPONENTS[component]
-    _safe_rmtree(dst)
-    try:
-        shutil.copytree(src, dst)
-        print(f"[RemoteTools] Восстановлено {component} из {snapshot_name}")
-        return True
-    except Exception as e:
-        print(f"[RemoteTools] Ошибка восстановления {component}: {e}")
-        return False
-
-
-def rt_reset(component):
-    if component == "full":
-        for name in COMPONENTS:
-            rt_reset(name)
-        return
-
-    if component not in COMPONENTS:
-        print(f"[RemoteTools] Неизвестный компонент: {component}")
-        print(f"Доступно: full, {', '.join(COMPONENTS)}")
-        return
-
-    path = COMPONENTS[component]
-    print(f"[RemoteTools] Сброс {component} ({path})...")
-    _safe_rmtree(path)
-    os.makedirs(path, exist_ok=True)
-    print(f"[RemoteTools] {component} сброшен")
-
-
-def rt_list():
-    _ensure_snapshots()
-    print(f"\n  Снапшоты в {SNAPSHOTS_DIR}:")
-    snaps = sorted(os.listdir(SNAPSHOTS_DIR))
-    if not snaps:
-        print("    (нет)")
-        return
-    for s in snaps:
-        p = os.path.join(SNAPSHOTS_DIR, s)
-        size = _human_size(_dir_size(p))
-        print(f"    • {s}  ({size})")
-    print()
-
-
-def rt_clean(keep=5):
-    _ensure_snapshots()
-    snaps = sorted(os.listdir(SNAPSHOTS_DIR))
-    if len(snaps) <= keep:
-        print(f"[RemoteTools] Снапшотов {len(snaps)}, чистить нечего.")
-        return
-    to_remove = snaps[:-keep]
-    for s in to_remove:
-        p = os.path.join(SNAPSHOTS_DIR, s)
-        _safe_rmtree(p)
-        print(f"[RemoteTools] Удалён: {s}")
-    print(f"[RemoteTools] Оставлено: {keep} последних.")
-
-
-def rt_export():
-    _ensure_snapshots()
-    ts = _ts()
-    zip_path = os.path.join(SNAPSHOTS_DIR, f"dreamux_backup_{ts}.zip")
-
-    print(f"[RemoteTools] Экспорт в {zip_path}...")
-    try:
-        with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_DEFLATED) as zf:
-            for name, path in COMPONENTS.items():
-                if os.path.isdir(path):
-                    for root, _, files in os.walk(path):
-                        for f in files:
-                            full = os.path.join(root, f)
-                            rel = os.path.relpath(full, KERNEL_DIR)
-                            zf.write(full, rel)
-        size = _human_size(os.path.getsize(zip_path))
-        print(f"[RemoteTools] Экспортировано ({size}): {zip_path}")
-    except Exception as e:
-        print(f"[RemoteTools] Ошибка экспорта: {e}")
-
-
-# ============================================================
-# Slash-команда /remote
-# ============================================================
-
-def slash_remote(kernel, args):
-    if not args:
-        print("RemoteTools — использование:")
-        print("  /remote status")
-        print("  /remote list")
-        print("  /remote backup [full|sandbox|logs|config|avdb|gnome_gui]")
-        print("  /remote restore <component> <snapshot_name>")
-        print("  /remote reset <full|component>")
-        print("  /remote clean [N]")
-        print("  /remote export")
-        return
-
-    cmd = args[0].lower()
-
-    if cmd == "status":
-        rt_status()
-    elif cmd == "list":
-        rt_list()
-    elif cmd == "backup":
-        comp = args[1] if len(args) > 1 else "full"
-        rt_backup(comp)
-    elif cmd == "restore":
-        if len(args) < 3:
-            print("Использование: /remote restore <component> <snapshot>")
+    def _reset_full():
+        r = QMessageBox.question(win, "RemoteTools",
+            "Сбросить ВСЕ компоненты?\n"
+            "sandbox, logs, config, avdb — будут пересозданы.\n"
+            "Снапшоты НЕ удаляются.")
+        if r != QMessageBox.StandardButton.Yes:
             return
-        rt_restore(args[1], args[2])
-    elif cmd == "reset":
-        comp = args[1] if len(args) > 1 else "full"
-        rt_reset(comp)
-    elif cmd == "clean":
-        n = int(args[1]) if len(args) > 1 and args[1].isdigit() else 5
-        rt_clean(n)
-    elif cmd == "export":
-        rt_export()
-    else:
-        print(f"[RemoteTools] Неизвестная команда: {cmd}")
-        print("Список: /remote без аргументов")
+        for name, path in COMPONENTS.items():
+            if os.path.isdir(path):
+                shutil.rmtree(path, ignore_errors=True)
+            os.makedirs(path, exist_ok=True)
+        log_write("sandbox", "RESET", "RemoteTools: полный сброс")
+        QMessageBox.information(win, "RemoteTools", "Все компоненты сброшены.")
+        refresh_info()
 
+    def _reset_one():
+        name, ok = QInputDialog.getItem(
+            win, "RemoteTools", "Компонент для сброса:",
+            list(COMPONENTS.keys()), 0, False,
+        )
+        if not ok:
+            return
+        path = COMPONENTS[name]
+        shutil.rmtree(path, ignore_errors=True)
+        os.makedirs(path, exist_ok=True)
+        log_write("sandbox", "RESET", f"RemoteTools: сброс {name}")
+        QMessageBox.information(win, "RemoteTools", f"{name} сброшен.")
+        refresh_info()
 
-def register(kernel):
-    kernel.register_slash_command(
-        "remote",
-        slash_remote,
-        "RemoteTools — снапшоты, восстановление, сброс компонентов",
-    )
-    return []
+    def _export():
+        _ensure()
+        ts = datetime.datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+        zip_path = os.path.join(SNAPSHOTS_DIR, f"dreamux_backup_{ts}.zip")
+        try:
+            with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_DEFLATED) as zf:
+                for name, path in COMPONENTS.items():
+                    if os.path.isdir(path):
+                        for root, _, files in os.walk(path):
+                            for f in files:
+                                full = os.path.join(root, f)
+                                rel = os.path.relpath(full, KERNEL_DIR)
+                                zf.write(full, rel)
+            log_write("actions", "INFO", "RemoteTools: экспорт", zip_path=zip_path)
+            QMessageBox.information(win, "RemoteTools",
+                f"Экспортировано:\n{zip_path}")
+        except Exception as e:
+            QMessageBox.warning(win, "RemoteTools", f"Ошибка: {e}")
+
+    b1 = QPushButton("Снапшот (full)")
+    b1.setObjectName("WinBtn")
+    b1.clicked.connect(_backup)
+    t1.addWidget(b1)
+
+    btns = QHBoxLayout()
+    b2 = QPushButton("Сброс компонента"); b2.setObjectName("WinBtn")
+    b2.clicked.connect(_reset_one); btns.addWidget(b2)
+    b3 = QPushButton("Сброс ВСЕГО"); b3.setObjectName("WinBtn")
+    b3.clicked.connect(_reset_full); btns.addWidget(b3)
+    b4 = QPushButton("Экспорт в ZIP"); b4.setObjectName("WinBtn")
+    b4.clicked.connect(_export); btns.addWidget(b4)
+    b5 = QPushButton("Обновить"); b5.setObjectName("WinBtn")
+    b5.clicked.connect(refresh_info); btns.addWidget(b5)
+    t1.addLayout(btns)
+    tabs.addTab(tab1, "Компоненты")
+
+    # --- Вкладка 2: Снапшоты ---
+    tab2 = QWidget()
+    t2 = QVBoxLayout(tab2)
+    t2.addWidget(QLabel("Снапшоты:"))
+
+    list_w = QListWidget()
+    list_w.setObjectName("Sidebar")
+    t2.addWidget(list_w, 1)
+
+    def refresh_snaps():
+        list_w.clear()
+        _ensure()
+        for s in sorted(os.listdir(SNAPSHOTS_DIR), reverse=True):
+            list_w.addItem(QListWidgetItem(s))
+
+    refresh_snaps()
+
+    def _restore():
+        it = list_w.currentItem()
+        if not it:
+            return
+        snap_name = it.text()
+        name, ok = QInputDialog.getItem(
+            win, "Восстановить", "Компонент:",
+            list(COMPONENTS.keys()), 0, False,
+        )
+        if not ok:
+            return
+        snap_dir = os.path.join(SNAPSHOTS_DIR, snap_name)
+        if snap_name.startswith("full_"):
+            src = os.path.join(snap_dir, name)
+        else:
+            src = snap_dir
+        if not os.path.isdir(src):
+            QMessageBox.warning(win, "RemoteTools",
+                f"В снапшоте нет '{name}'.")
+            return
+        dst = COMPONENTS[name]
+        shutil.rmtree(dst, ignore_errors=True)
+        try:
+            shutil.copytree(src, dst)
+            log_write("actions", "INFO", "RemoteTools: восстановление",
+                      component=name, snapshot=snap_name)
+            QMessageBox.information(win, "RemoteTools",
+                f"{name} восстановлен из {snap_name}")
+            refresh_info()
+        except Exception as e:
+            QMessageBox.warning(win, "RemoteTools", f"Ошибка: {e}")
+
+    def _delete_snap():
+        it = list_w.currentItem()
+        if not it:
+            return
+        snap_name = it.text()
+        r = QMessageBox.question(win, "RemoteTools",
+            f"Удалить снапшот?\n{snap_name}")
+        if r != QMessageBox.StandardButton.Yes:
+            return
+        shutil.rmtree(os.path.join(SNAPSHOTS_DIR, snap_name), ignore_errors=True)
+        refresh_snaps()
+        refresh_info()
+
+    def _clean():
+        snaps = sorted(os.listdir(SNAPSHOTS_DIR))
+        if len(snaps) <= 5:
+            QMessageBox.information(win, "RemoteTools", "Нечего чистить.")
+            return
+        for s in snaps[:-5]:
+            shutil.rmtree(os.path.join(SNAPSHOTS_DIR, s), ignore_errors=True)
+        refresh_snaps()
+        refresh_info()
+        QMessageBox.information(win, "RemoteTools",
+            "Оставлено 5 последних снапшотов.")
+
+    rb = QHBoxLayout()
+    br = QPushButton("Восстановить"); br.setObjectName("WinBtn")
+    br.clicked.connect(_restore); rb.addWidget(br)
+    bd = QPushButton("Удалить"); bd.setObjectName("WinBtn")
+    bd.clicked.connect(_delete_snap); rb.addWidget(bd)
+    bc = QPushButton("Оставить 5"); bc.setObjectName("WinBtn")
+    bc.clicked.connect(_clean); rb.addWidget(bc)
+    bu = QPushButton("Обновить"); bu.setObjectName("WinBtn")
+    bu.clicked.connect(refresh_snaps); rb.addWidget(bu)
+    t2.addLayout(rb)
+    tabs.addTab(tab2, "Снапшоты")
+
+    log_write("actions", "INFO", "RemoteTools открыт")
