@@ -1,4 +1,4 @@
-"""Менеджер установщиков второстепенной ОС. Токен, AV хоста, allowlist."""
+"""Установщики DreamUX. Токен + AV-проверка."""
 
 import os
 import sys
@@ -6,8 +6,15 @@ import json
 import shutil
 import subprocess
 
+from PyQt6.QtWidgets import (
+    QWidget, QVBoxLayout, QHBoxLayout, QListWidget, QListWidgetItem,
+    QLabel, QTextEdit, QPushButton,
+)
+
+
 HERE = os.path.dirname(os.path.abspath(__file__))
-KERNEL_DIR = os.path.dirname(HERE)
+PLUGIN_DIR = os.path.dirname(HERE)
+KERNEL_DIR = os.path.dirname(PLUGIN_DIR)
 SANDBOX_ROOT = os.path.join(KERNEL_DIR, "sandbox")
 INSTALLERS_DIR = os.path.join(SANDBOX_ROOT, "installers")
 INSTALLED_DIR = os.path.join(SANDBOX_ROOT, "apps")
@@ -16,9 +23,9 @@ log_write = lambda *a, **k: None
 
 INSTALLER_ALLOWLIST = [
     "flathub.org", "dl.flathub.org", "snapcraft.io", "api.snapcraft.io",
-    "github.com", "objects.githubusercontent.com", "raw.githubusercontent.com",
-    "sourceforge.net", "downloads.sourceforge.net",
-    "apps.microsoft.com", "f-droid.org",
+    "github.com", "objects.githubusercontent.com",
+    "raw.githubusercontent.com", "sourceforge.net",
+    "downloads.sourceforge.net", "apps.microsoft.com", "f-droid.org",
     "deb.debian.org", "archive.ubuntu.com", "packages.microsoft.com",
 ]
 
@@ -74,7 +81,7 @@ def run_installer(installer_dir_name, netd, av=None):
     env["SIMPLEOS_INSTALLER_DIR"] = inst_path
     env["SIMPLEOS_DOWNLOADS_DIR"] = dl_dir
     env["PYTHONPATH"] = os.pathsep.join(
-        [os.path.join(KERNEL_DIR, "plugins"), env.get("PYTHONPATH", "")]
+        [PLUGIN_DIR, env.get("PYTHONPATH", "")]
     )
     try:
         proc = subprocess.Popen([sys.executable, entry_path],
@@ -123,13 +130,14 @@ def installers_open(desktop):
     global log_write
     from gnome_gui import GnomeWindow, log_write as lw
     log_write = lw
-    from netd import get_global_daemon
-    from PyQt6.QtWidgets import (
-        QHBoxLayout, QVBoxLayout, QListWidget, QListWidgetItem,
-        QLabel, QTextEdit, QPushButton, QWidget,
-    )
+    try:
+        from netd import get_global_daemon
+        netd = get_global_daemon()
+    except Exception:
+        netd = None
 
     win = GnomeWindow(desktop, "Установщики", 860, 560, 140, 90)
+
     row = QHBoxLayout()
     sb = QListWidget()
     sb.setObjectName("Sidebar")
@@ -171,16 +179,15 @@ def installers_open(desktop):
         i = cur["i"]
         if not i:
             return
-        netd = get_global_daemon()
         if netd is None:
-            info.setPlainText("⛔ Ядро недоступно")
+            info.setPlainText("Ядро недоступно")
             return
         try:
             from av_bridge import AVBridge
             av = AVBridge(log_fn=lambda m: log_write("antivirus", "INFO", m))
         except Exception:
             av = None
-        info.setPlainText("⏳ Установка идёт...")
+        info.setPlainText("Установка идёт...")
         r = run_installer(i["dir"], netd, av)
         info.setPlainText(json.dumps(r, indent=2, ensure_ascii=False,
                                      default=str))
