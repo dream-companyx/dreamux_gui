@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""GNOME-подобный интерфейс DreamUX (PyQt6). Полная версия."""
+"""GNOME-подобный интерфейс DreamUX (PyQt6). Полная исправленная версия."""
 
 import os
 import sys
@@ -37,9 +37,6 @@ for _p in (LOGS_ROOT, SCREENSHOTS_DIR, ASSETS_DIR, SANDBOX_ROOT):
         pass
 
 
-# ============================================================
-# PyQt6
-# ============================================================
 from PyQt6.QtCore import (
     Qt, QTimer, QPoint, QPropertyAnimation, QEasingCurve, QRect,
 )
@@ -51,7 +48,7 @@ from PyQt6.QtWidgets import (
     QLabel, QPushButton, QFrame, QListWidget, QListWidgetItem,
     QGridLayout, QScrollArea, QSizePolicy, QLineEdit, QTextEdit,
     QGraphicsOpacityEffect, QStackedWidget, QFileDialog, QMessageBox,
-    QTabWidget, QCheckBox,
+    QTabWidget,
 )
 
 
@@ -466,12 +463,13 @@ def open_files(desktop):
         ("🗑 Временные",             SANDBOX_DIRS["tmp"]),
         ("⛔ Карантин",              SANDBOX_DIRS["quarantine"]),
     ]
-    loc_by_item = {}
+    # ИСПРАВЛЕНО: используем индекс, а не QListWidgetItem как ключ
+    loc_by_index = {}
     for label, path in locs:
         it = QListWidgetItem(label)
         it.setToolTip(path)
         sidebar.addItem(it)
-        loc_by_item[it] = path
+        loc_by_index[sidebar.count() - 1] = path
     row.addWidget(sidebar)
 
     right = QWidget()
@@ -495,7 +493,8 @@ def open_files(desktop):
     bar.addWidget(b_logs)
     path_lbl = QLabel("/")
     path_lbl.setObjectName("H2")
-    path_lbl.setStyleSheet("padding: 4px 10px; background: #1a1a1a; border-radius: 6px;")
+    path_lbl.setStyleSheet("padding: 4px 10px; background: #1a1a1a; "
+                           "border-radius: 6px;")
     bar.addWidget(path_lbl, 1)
     rl.addLayout(bar)
 
@@ -724,8 +723,10 @@ def open_files(desktop):
     b_up.clicked.connect(go_up)
     b_ref.clicked.connect(refresh_current)
 
+    # ИСПРАВЛЕНО: ищем по индексу, а не по объекту
     def on_sidebar(item):
-        p = loc_by_item.get(item)
+        row_idx = sidebar.row(item)
+        p = loc_by_index.get(row_idx)
         if p:
             navigate(p)
     sidebar.itemClicked.connect(on_sidebar)
@@ -935,9 +936,10 @@ def open_browser(desktop):
         log_write("errors", "ERROR", f"browser: {e}",
                   traceback=traceback.format_exc()[:500])
         win = GnomeWindow(desktop, "Браузер", 620, 400, 200, 150)
-        QLabel(f"Не удалось открыть Browser:\n\n{e}\n\n"
-               f"Смотри лог: plugins/gnome_gui/logs/errors.log",
-               win.body).pack(pady=20)
+        lbl = QLabel(f"Не удалось открыть Browser:\n\n{e}\n\n"
+                     f"Смотри лог: plugins/gnome_gui/logs/errors.log")
+        lbl.setWordWrap(True)
+        win.body_lay.addWidget(lbl)
 
 
 def open_games(desktop):
@@ -949,9 +951,9 @@ def open_games(desktop):
         log_write("errors", "ERROR", f"games: {e}",
                   traceback=traceback.format_exc()[:500])
         win = GnomeWindow(desktop, "Игры", 620, 400, 200, 150)
-        QLabel(f"Не удалось открыть Games:\n\n{e}\n\n"
-               f"Смотри лог: plugins/gnome_gui/logs/errors.log",
-               win.body).pack(pady=20)
+        lbl = QLabel(f"Не удалось открыть Games:\n\n{e}")
+        lbl.setWordWrap(True)
+        win.body_lay.addWidget(lbl)
 
 
 def open_installers(desktop):
@@ -963,9 +965,9 @@ def open_installers(desktop):
         log_write("errors", "ERROR", f"installers: {e}",
                   traceback=traceback.format_exc()[:500])
         win = GnomeWindow(desktop, "Установщики", 620, 400, 200, 150)
-        QLabel(f"Не удалось открыть Installers:\n\n{e}\n\n"
-               f"Смотри лог: plugins/gnome_gui/logs/errors.log",
-               win.body).pack(pady=20)
+        lbl = QLabel(f"Не удалось открыть Installers:\n\n{e}")
+        lbl.setWordWrap(True)
+        win.body_lay.addWidget(lbl)
 
 
 def open_av(desktop):
@@ -985,8 +987,7 @@ def open_av(desktop):
             f"Активен:  {'да' if st['active'] else 'нет'}\n"
             f"Название: {st.get('name','—')}\n"
             f"Тип:      {st.get('type','—')}\n"
-            f"Путь:     {st.get('path','—')}\n\n"
-            f"Все файлы проверяются ДО попадания в песочницу."
+            f"Путь:     {st.get('path','—')}\n"
         )
     except Exception as e:
         info.setPlainText(f"Ошибка: {e}")
@@ -1009,8 +1010,6 @@ def open_vpn(desktop):
             f"OpenVPN:      {st['openvpn'] or 'НЕ найден'}\n"
             f"Конфиг:       {st['config'] or '—'}\n"
             f"Auth:         {st['auth'] or '—'}\n"
-            f"Папка файлов: {st['files_dir']}\n"
-            f"Папка логов:  {st['logs_dir']}\n"
             f"Подключение:  {'АКТИВНО' if st['connected'] else 'нет'}\n"
             f"Kill-switch:  {'вкл' if st['kill_switch'] else 'выкл'}\n"
         )
@@ -1027,9 +1026,9 @@ def open_remote(desktop):
         log_write("errors", "ERROR", f"remote_tools: {e}",
                   traceback=traceback.format_exc()[:500])
         win = GnomeWindow(desktop, "RemoteTools", 620, 400, 200, 150)
-        QLabel(f"Не удалось открыть RemoteTools:\n\n{e}\n\n"
-               f"Смотри лог: plugins/gnome_gui/logs/errors.log",
-               win.body).pack(pady=20)
+        lbl = QLabel(f"Не удалось открыть RemoteTools:\n\n{e}")
+        lbl.setWordWrap(True)
+        win.body_lay.addWidget(lbl)
 
 
 # ============================================================
@@ -1093,7 +1092,6 @@ class GnomeDesktop(QMainWindow):
         log_write("actions", "INFO", "DreamUX GUI закрыт")
         super().closeEvent(e)
 
-    # --- Приложения ---
     def open_files(self):      open_files(self)
     def open_settings(self):   open_settings(self)
     def open_terminal(self):   open_terminal(self)
@@ -1107,9 +1105,6 @@ class GnomeDesktop(QMainWindow):
     def open_remote(self):     open_remote(self)
 
 
-# ============================================================
-# Запуск
-# ============================================================
 def main():
     app = QApplication(sys.argv)
     app.setStyleSheet(ADWAITA_DARK_QSS)
