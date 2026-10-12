@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""GNOME-подобный интерфейс на PyQt6 с песочницей, логами и скриншотами."""
+"""GNOME-подобный интерфейс DreamUX (PyQt6). Полная версия."""
 
 import os
 import sys
@@ -8,9 +8,40 @@ import string
 import platform
 import datetime
 import shutil
+import traceback
 
+# ============================================================
+# ПУТИ — ДО ВСЕХ ИМПОРТОВ
+# ============================================================
+HERE = os.environ.get("SIMPLEOS_GNOME_DIR") or \
+       os.path.dirname(os.path.abspath(__file__))
+PLUGIN_DIR = os.environ.get("SIMPLEOS_PLUGIN_DIR") or \
+             os.path.dirname(HERE)
+LOGS_ROOT = os.environ.get("SIMPLEOS_LOGS_DIR") or \
+            os.path.join(HERE, "logs")
+SCREENSHOTS_DIR = os.environ.get("SIMPLEOS_SCREENSHOTS_DIR") or \
+                  os.path.join(HERE, "screenshots")
+ASSETS_DIR = os.environ.get("SIMPLEOS_ASSETS_DIR") or \
+             os.path.join(HERE, "assets")
+KERNEL_DIR = os.path.dirname(PLUGIN_DIR)
+SANDBOX_ROOT = os.path.join(KERNEL_DIR, "sandbox")
+
+for _p in (HERE, PLUGIN_DIR):
+    if _p and _p not in sys.path:
+        sys.path.insert(0, _p)
+
+for _p in (LOGS_ROOT, SCREENSHOTS_DIR, ASSETS_DIR, SANDBOX_ROOT):
+    try:
+        os.makedirs(_p, exist_ok=True)
+    except Exception:
+        pass
+
+
+# ============================================================
+# PyQt6
+# ============================================================
 from PyQt6.QtCore import (
-    Qt, QTimer, QPoint, QPropertyAnimation, QEasingCurve,
+    Qt, QTimer, QPoint, QPropertyAnimation, QEasingCurve, QRect,
 )
 from PyQt6.QtGui import (
     QColor, QPainter, QLinearGradient, QShortcut, QKeySequence, QPixmap,
@@ -23,19 +54,10 @@ from PyQt6.QtWidgets import (
     QTabWidget, QCheckBox,
 )
 
-# --- Пути ---
-HERE = os.path.dirname(os.path.abspath(__file__))
-KERNEL_DIR = os.path.dirname(HERE)
-SANDBOX_ROOT = os.path.join(KERNEL_DIR, "sandbox")
-LOGS_ROOT = os.path.join(KERNEL_DIR, "logs")
-SCREENSHOTS_DIR = os.path.join(HERE, "screenshots")
-sys.path.insert(0, os.path.join(KERNEL_DIR, "plugins"))
 
-os.makedirs(SANDBOX_ROOT, exist_ok=True)
-os.makedirs(LOGS_ROOT, exist_ok=True)
-os.makedirs(SCREENSHOTS_DIR, exist_ok=True)
-
-# --- Песочница ---
+# ============================================================
+# Песочница
+# ============================================================
 SANDBOX_DIRS = {
     "home":       os.path.join(SANDBOX_ROOT, "home"),
     "system":     os.path.join(SANDBOX_ROOT, "system"),
@@ -48,7 +70,10 @@ SANDBOX_DIRS = {
     "installers": os.path.join(SANDBOX_ROOT, "installers"),
 }
 for p in SANDBOX_DIRS.values():
-    os.makedirs(p, exist_ok=True)
+    try:
+        os.makedirs(p, exist_ok=True)
+    except Exception:
+        pass
 
 SANDBOX_ROOTS = [SANDBOX_ROOT]
 MAX_TEXT_SIZE = 2 * 1024 * 1024
@@ -62,7 +87,10 @@ DANGEROUS_EXT = {
     "py", "pyc", "pyo", "rb", "pl", "php",
 }
 
-# --- Логи ---
+
+# ============================================================
+# Логи
+# ============================================================
 LOG_FILES = {
     "actions":    os.path.join(LOGS_ROOT, "actions.log"),
     "sandbox":    os.path.join(LOGS_ROOT, "sandbox.log"),
@@ -90,7 +118,10 @@ def log_write(category, level, message, **fields):
             f.write(line)
     except Exception:
         pass
-    print(f"[LOG/{category}] {line.rstrip()}")
+    try:
+        print(f"[LOG/{category}] {line.rstrip()}", flush=True)
+    except Exception:
+        pass
 
 
 def log_tail(category, n=200):
@@ -104,7 +135,9 @@ def log_tail(category, n=200):
         return f"(ошибка: {e})"
 
 
-# --- Песочница: утилиты ---
+# ============================================================
+# Песочница — утилиты
+# ============================================================
 def is_path_allowed(path):
     try:
         real = os.path.realpath(path)
@@ -155,13 +188,19 @@ def sandbox_quarantine(path):
     while os.path.exists(dst):
         dst = f"{base}_{i}{ext}"
         i += 1
-    shutil.move(path, dst)
-    log_write("quarantine", "DANGER", "Файл в карантине",
-              src=path, dst=dst)
+    try:
+        shutil.move(path, dst)
+        log_write("quarantine", "DANGER", "Файл в карантине",
+                  src=path, dst=dst)
+    except Exception as e:
+        log_write("errors", "ERROR", f"Карантин: {e}", path=path)
+        return None
     return dst
 
 
-# --- QSS ---
+# ============================================================
+# QSS
+# ============================================================
 ADWAITA_DARK_QSS = """
 * { font-family: "Segoe UI", "Cantarell", "Ubuntu", sans-serif;
     font-size: 10pt; color: #ffffff; }
@@ -213,7 +252,9 @@ QTabBar::tab:selected { background: #3584e4; color: white; }
 """
 
 
-# --- Скриншоты ---
+# ============================================================
+# Toast / Скриншот
+# ============================================================
 def take_screenshot(window):
     os.makedirs(SCREENSHOTS_DIR, exist_ok=True)
     name = datetime.datetime.now().strftime("screenshot_%Y-%m-%d_%H-%M-%S.png")
@@ -249,6 +290,9 @@ class Toast(QLabel):
         QTimer.singleShot(timeout_ms, anim.start)
 
 
+# ============================================================
+# Обои / панель / док / окно
+# ============================================================
 class WallpaperWidget(QWidget):
     def paintEvent(self, event):
         p = QPainter(self)
@@ -283,7 +327,7 @@ class TopPanel(QFrame):
         b = QPushButton("Activities")
         b.setObjectName("PanelButton")
         lay.addWidget(b)
-        lbl = QLabel("SimpleOS")
+        lbl = QLabel("DreamUX")
         lbl.setObjectName("PanelLabel")
         lbl.setStyleSheet("font-weight: 700;")
         lay.addWidget(lbl)
@@ -313,16 +357,16 @@ class Dock(QFrame):
         lay.setContentsMargins(10, 8, 10, 8)
         lay.setSpacing(6)
         apps = [
-            ("📁", "Files",      self.desktop.open_files),
-            ("🌐", "Browser",    self.desktop.open_browser),
-            ("🎮", "Games",      self.desktop.open_games),
-            ("📦", "Installers", self.desktop.open_installers),
-            ("🛡", "AV",         self.desktop.open_av),
-            ("🔒", "VPN",        self.desktop.open_vpn),
-            ("▶",  "Terminal",   self.desktop.open_terminal),
-            ("🕒", "Clocks",     self.desktop.open_clocks),
-            ("⚙",  "Settings",   self.desktop.open_settings),
-            ("ℹ",  "About",      self.desktop.open_about),
+            ("📁", "Files",      desktop.open_files),
+            ("🌐", "Browser",    desktop.open_browser),
+            ("🎮", "Games",      desktop.open_games),
+            ("📦", "Installers", desktop.open_installers),
+            ("🛡", "AV",         desktop.open_av),
+            ("🔒", "VPN",        desktop.open_vpn),
+            ("▶",  "Terminal",   desktop.open_terminal),
+            ("🕒", "Clocks",     desktop.open_clocks),
+            ("⚙",  "Settings",   desktop.open_settings),
+            ("ℹ",  "About",      desktop.open_about),
         ]
         for icon, name, cb in apps:
             b = QPushButton(f"{icon}\n{name}")
@@ -332,6 +376,8 @@ class Dock(QFrame):
 
 
 class GnomeWindow(QFrame):
+    """Окно с headerbar, перетаскиванием, кнопками свернуть/закрыть."""
+
     def __init__(self, desktop, title, w=560, h=400, x=120, y=100):
         super().__init__(desktop.desktop_area)
         self.desktop = desktop
@@ -339,6 +385,7 @@ class GnomeWindow(QFrame):
         self.setGeometry(x, y, w, h)
         self.raise_()
         self._drag = None
+        desktop.windows.append(self)
 
         outer = QVBoxLayout(self)
         outer.setContentsMargins(0, 0, 0, 0)
@@ -354,15 +401,18 @@ class GnomeWindow(QFrame):
         t.setObjectName("WindowTitle")
         hl.addWidget(t)
         hl.addStretch()
+
         bmin = QPushButton("—")
         bmin.setObjectName("WinBtn")
         bmin.clicked.connect(self.hide)
         hl.addWidget(bmin)
+
         bclose = QPushButton("✕")
         bclose.setObjectName("WinClose")
         bclose.setProperty("class", "WinBtn")
         bclose.clicked.connect(self.close)
         hl.addWidget(bclose)
+
         outer.addWidget(hb)
 
         self.body = QFrame()
@@ -388,26 +438,15 @@ class GnomeWindow(QFrame):
     def _ed(self, e):
         self._drag = None
 
-
-# --- Приложения ---
-def icon_for(name, is_dir):
-    if is_dir:
-        return "📁"
-    ext = name.lower().rsplit(".", 1)[-1] if "." in name else ""
-    return {
-        "txt": "📄", "md": "📝", "log": "📋", "json": "📋", "xml": "📋",
-        "png": "🖼", "jpg": "🖼", "jpeg": "🖼", "gif": "🖼", "svg": "🖼",
-        "mp3": "🎵", "wav": "🎵", "flac": "🎵",
-        "mp4": "🎬", "mkv": "🎬", "avi": "🎬",
-        "pdf": "📕", "doc": "📘", "docx": "📘",
-        "xls": "📗", "xlsx": "📗", "ppt": "📙", "pptx": "📙",
-        "zip": "🗜", "rar": "🗜", "7z": "🗜",
-        "py": "🐍", "js": "📜", "html": "🌐", "css": "🎨",
-        "exe": "⚙", "sh": "⚙", "bat": "⚙",
-        "apk": "📱", "iso": "💿",
-    }.get(ext, "📄")
+    def closeEvent(self, event):
+        if self in self.desktop.windows:
+            self.desktop.windows.remove(self)
+        super().closeEvent(event)
 
 
+# ============================================================
+# Приложения
+# ============================================================
 def open_files(desktop):
     log_write("actions", "INFO", "Открыто Files")
     win = GnomeWindow(desktop, "Файлы", 900, 560, 100, 60)
@@ -418,16 +457,16 @@ def open_files(desktop):
     sidebar.setObjectName("Sidebar")
     sidebar.setFixedWidth(240)
     locs = [
-        ("🏠 Домашняя папка",        SANDBOX_DIRS["home"],       "linux"),
-        ("📥 Импорт из главной ОС",  SANDBOX_DIRS["import"],     "linux"),
-        ("⚙ Система",                SANDBOX_DIRS["system"],     "linux"),
-        ("📦 Приложения",            SANDBOX_DIRS["apps"],       "linux"),
-        ("💾 Диски",                 SANDBOX_DIRS["media"],      "linux"),
-        ("🗑 Временные",             SANDBOX_DIRS["tmp"],        "linux"),
-        ("⛔ Карантин",              SANDBOX_DIRS["quarantine"], "android"),
+        ("🏠 Домашняя папка",        SANDBOX_DIRS["home"]),
+        ("📥 Импорт из главной ОС",  SANDBOX_DIRS["import"]),
+        ("⚙ Система",                SANDBOX_DIRS["system"]),
+        ("📦 Приложения",            SANDBOX_DIRS["apps"]),
+        ("💾 Диски",                 SANDBOX_DIRS["media"]),
+        ("🗑 Временные",             SANDBOX_DIRS["tmp"]),
+        ("⛔ Карантин",              SANDBOX_DIRS["quarantine"]),
     ]
     loc_by_item = {}
-    for label, path, grp in locs:
+    for label, path in locs:
         it = QListWidgetItem(label)
         it.setToolTip(path)
         sidebar.addItem(it)
@@ -447,14 +486,12 @@ def open_files(desktop):
     b_ref = QPushButton("⟳"); b_ref.setObjectName("WinBtn")
     for b in (b_back, b_fwd, b_up, b_ref):
         bar.addWidget(b)
-
     b_import = QPushButton("📥 Импорт"); b_import.setObjectName("WinBtn")
     bar.addWidget(b_import)
     b_reset = QPushButton("🔄 Сброс ОС"); b_reset.setObjectName("WinBtn")
     bar.addWidget(b_reset)
     b_logs = QPushButton("📜 Логи"); b_logs.setObjectName("WinBtn")
     bar.addWidget(b_logs)
-
     path_lbl = QLabel("/")
     path_lbl.setObjectName("H2")
     path_lbl.setStyleSheet("padding: 4px 10px; background: #1a1a1a; border-radius: 6px;")
@@ -463,7 +500,6 @@ def open_files(desktop):
 
     stack = QStackedWidget()
 
-    # --- сетка ---
     grid_w = QWidget()
     grid = QGridLayout(grid_w)
     grid.setSpacing(16)
@@ -474,7 +510,6 @@ def open_files(desktop):
     scroll.setWidget(grid_w)
     stack.addWidget(scroll)
 
-    # --- просмотрщик ---
     viewer = QWidget()
     vl = QVBoxLayout(viewer)
     vl.setContentsMargins(0, 0, 0, 0)
@@ -484,16 +519,13 @@ def open_files(desktop):
     vback = QPushButton("← К файлам"); vback.setObjectName("WinBtn")
     vhead.addWidget(vback)
     vl.addLayout(vhead)
-
     vbody = QStackedWidget()
     vl.addWidget(vbody, 1)
-
     vtext = QTextEdit()
     vtext.setReadOnly(True)
     vtext.setStyleSheet("background:#0d0d0d; color:#e0e0e0; "
                         "font-family:'Consolas','Monospace'; font-size:10pt;")
     vbody.addWidget(vtext)
-
     vimg = QLabel()
     vimg.setAlignment(Qt.AlignmentFlag.AlignCenter)
     vimg.setStyleSheet("background:#0d0d0d;")
@@ -501,13 +533,11 @@ def open_files(desktop):
     vimg_scroll.setWidgetResizable(True)
     vimg_scroll.setWidget(vimg)
     vbody.addWidget(vimg_scroll)
-
     vmedia = QLabel()
     vmedia.setAlignment(Qt.AlignmentFlag.AlignCenter)
     vmedia.setStyleSheet("background:#0d0d0d; color:#9a9a9a; font-size:12pt;")
     vmedia.setWordWrap(True)
     vbody.addWidget(vmedia)
-
     stack.addWidget(viewer)
     rl.addWidget(stack, 1)
     row.addWidget(right, 1)
@@ -517,6 +547,23 @@ def open_files(desktop):
                 "toml","env","html","htm","css","sql","csv","tsv","rtf","tex"}
     IMG_EXT = {"png","jpg","jpeg","gif","bmp","webp","tiff","ico","svg"}
     MEDIA_EXT = {"mp3","wav","flac","ogg","m4a","aac","mp4","mkv","avi","mov"}
+
+    def icon_for(name, is_dir):
+        if is_dir:
+            return "📁"
+        ext = name.lower().rsplit(".", 1)[-1] if "." in name else ""
+        return {
+            "txt":"📄","md":"📝","log":"📋","json":"📋","xml":"📋",
+            "png":"🖼","jpg":"🖼","jpeg":"🖼","gif":"🖼","svg":"🖼",
+            "mp3":"🎵","wav":"🎵","flac":"🎵",
+            "mp4":"🎬","mkv":"🎬","avi":"🎬",
+            "pdf":"📕","doc":"📘","docx":"📘",
+            "xls":"📗","xlsx":"📗","ppt":"📙","pptx":"📙",
+            "zip":"🗜","rar":"🗜","7z":"🗜",
+            "py":"🐍","js":"📜","html":"🌐","css":"🎨",
+            "exe":"⚙","sh":"⚙","bat":"⚙",
+            "apk":"📱","iso":"💿",
+        }.get(ext, "📄")
 
     def open_file_internal(path):
         if not is_path_allowed(path):
@@ -545,7 +592,6 @@ def open_files(desktop):
             )
             vbody.setCurrentWidget(vtext)
             stack.setCurrentWidget(viewer)
-            refresh_current()
             return
 
         if ext in TEXT_EXT or ext == "":
@@ -709,11 +755,14 @@ def open_files(desktop):
         i = 1
         while os.path.exists(dst):
             dst = f"{base}_{i}{ext}"; i += 1
-        shutil.copy2(path, dst)
-        log_write("actions", "INFO", "Импортировано", src=path, dst=dst)
-        QMessageBox.information(win, "Импорт",
-            f"✅ Скопировано в песочницу:\n{dst}\n\nОригинал:\n{path}")
-        refresh_current()
+        try:
+            shutil.copy2(path, dst)
+            log_write("actions", "INFO", "Импортировано", src=path, dst=dst)
+            QMessageBox.information(win, "Импорт",
+                f"✅ Скопировано в песочницу:\n{dst}\n\nОригинал:\n{path}")
+            refresh_current()
+        except Exception as e:
+            QMessageBox.warning(win, "Импорт", f"Ошибка: {e}")
 
     def on_reset():
         r = QMessageBox.question(win, "Сброс второстепенной ОС",
@@ -724,7 +773,6 @@ def open_files(desktop):
         shutil.rmtree(SANDBOX_ROOT, ignore_errors=True)
         for p in SANDBOX_DIRS.values():
             os.makedirs(p, exist_ok=True)
-        os.makedirs(SANDBOX_ROOT, exist_ok=True)
         state["history"].clear()
         state["index"] = -1
         navigate(SANDBOX_DIRS["home"])
@@ -771,13 +819,12 @@ def open_settings(desktop):
         sb.addItem(QListWidgetItem(it))
     sb.setCurrentRow(14)
     row.addWidget(sb)
-
     right = QWidget()
     rl = QVBoxLayout(right)
     t = QLabel("О системе"); t.setObjectName("H2")
     t.setAlignment(Qt.AlignmentFlag.AlignCenter)
     rl.addWidget(t)
-    logo = QLabel("GNOME")
+    logo = QLabel("DreamUX")
     logo.setStyleSheet("font-size:32pt; font-weight:200; color:#dddddd;")
     logo.setAlignment(Qt.AlignmentFlag.AlignCenter)
     rl.addWidget(logo)
@@ -788,7 +835,7 @@ def open_settings(desktop):
             ("Процессор","Intel Core i5-9400F × 6"),
             ("Графика","Software Rendering"),("Диск","107,4 ГБ")]),
         ("Программная информация", [
-            ("Название ОС","SimpleOS (Nightly)"),("Тип ОС","64-бит"),
+            ("Название ОС","DreamUX (Nightly)"),("Тип ОС","64-бит"),
             ("Версия GNOME","45.0"),("Оконный","Wayland"),
             ("Ядро","Linux 6.5.0")]),
     ]:
@@ -814,26 +861,34 @@ def open_terminal(desktop):
     out.setReadOnly(True)
     out.setStyleSheet("background:#0d0d0d; color:#e0e0e0; "
                       "font-family:'Consolas','Monospace'; font-size:10pt;")
-    out.append("SimpleOS Terminal — 'help'\n")
+    out.append("DreamUX Terminal — введите 'help'\n")
     win.body_lay.addWidget(out, 1)
     inp = QLineEdit()
-    inp.setPlaceholderText("user@simpleos:~$")
+    inp.setPlaceholderText("user@dreamux:~$")
     win.body_lay.addWidget(inp)
+
     def on_enter():
         cmd = inp.text().strip()
-        if not cmd: return
+        if not cmd:
+            return
         inp.clear()
-        out.append(f"<span style='color:#33d17a'>user@simpleos:~$</span> {cmd}")
+        out.append(f"<span style='color:#33d17a'>user@dreamux:~$</span> {cmd}")
         if cmd == "help":
             out.append("help, whoami, date, uname, clear, screenshot")
-        elif cmd == "whoami": out.append("user")
-        elif cmd == "date": out.append(datetime.datetime.now().strftime("%c"))
-        elif cmd == "uname": out.append("SimpleOS 1.0 x86_64")
-        elif cmd == "clear": out.clear()
+        elif cmd == "whoami":
+            out.append("user")
+        elif cmd == "date":
+            out.append(datetime.datetime.now().strftime("%c"))
+        elif cmd == "uname":
+            out.append("DreamUX 1.0 x86_64")
+        elif cmd == "clear":
+            out.clear()
         elif cmd == "screenshot":
             p = take_screenshot(desktop)
             out.append(f"Скриншот: {p}" if p else "Ошибка")
-        else: out.append(f"command not found: {cmd}")
+        else:
+            out.append(f"command not found: {cmd}")
+
     inp.returnPressed.connect(on_enter)
     inp.setFocus()
 
@@ -846,6 +901,7 @@ def open_clocks(desktop):
     d = QLabel(); d.setStyleSheet("color:#9a9a9a; font-size:11pt;")
     d.setAlignment(Qt.AlignmentFlag.AlignCenter)
     win.body_lay.addWidget(d)
+
     def tick():
         now = datetime.datetime.now()
         t.setText(now.strftime("%H:%M:%S"))
@@ -856,10 +912,11 @@ def open_clocks(desktop):
 
 def open_about(desktop):
     win = GnomeWindow(desktop, "О системе", 420, 300, 340, 200)
-    l1 = QLabel("SimpleOS"); l1.setStyleSheet("font-size:24pt; font-weight:700;")
+    l1 = QLabel("DreamUX"); l1.setStyleSheet("font-size:24pt; font-weight:700;")
     l1.setAlignment(Qt.AlignmentFlag.AlignCenter)
     win.body_lay.addWidget(l1)
-    l2 = QLabel("GNOME-like Desktop"); l2.setStyleSheet("color:#9a9a9a;")
+    l2 = QLabel("IDEAS INTO EXPERIENCES")
+    l2.setStyleSheet("color:#9a9a9a; letter-spacing:3px;")
     l2.setAlignment(Qt.AlignmentFlag.AlignCenter)
     win.body_lay.addWidget(l2)
     l3 = QLabel("Версия 1.0\nPyQt6 · Adwaita dark\nF12 — скриншот")
@@ -868,25 +925,127 @@ def open_about(desktop):
     win.body_lay.addWidget(l3)
 
 
-# --- Главное окно ---
+def open_browser(desktop):
+    """Открыть Browser. Все ошибки пишутся в errors.log."""
+    try:
+        log_write("browser", "INFO", "Запуск Browser")
+        from browser import browser_open
+        browser_open(desktop)
+    except Exception as e:
+        log_write("errors", "ERROR", f"browser: {e}",
+                  traceback=traceback.format_exc()[:500])
+        win = GnomeWindow(desktop, "Браузер", 620, 400, 200, 150)
+        QLabel(f"⛔ Не удалось открыть Browser:\n\n{e}\n\n"
+               f"Смотри лог: plugins/gnome_gui/logs/errors.log",
+               win.body).pack(pady=20)
+
+
+def open_games(desktop):
+    try:
+        log_write("games", "INFO", "Запуск Games")
+        from games import games_open
+        games_open(desktop)
+    except Exception as e:
+        log_write("errors", "ERROR", f"games: {e}",
+                  traceback=traceback.format_exc()[:500])
+        win = GnomeWindow(desktop, "Игры", 620, 400, 200, 150)
+        QLabel(f"⛔ Не удалось открыть Games:\n\n{e}\n\n"
+               f"Смотри лог: plugins/gnome_gui/logs/errors.log",
+               win.body).pack(pady=20)
+
+
+def open_installers(desktop):
+    try:
+        log_write("installers", "INFO", "Запуск Installers")
+        from installers import installers_open
+        installers_open(desktop)
+    except Exception as e:
+        log_write("errors", "ERROR", f"installers: {e}",
+                  traceback=traceback.format_exc()[:500])
+        win = GnomeWindow(desktop, "Установщики", 620, 400, 200, 150)
+        QLabel(f"⛔ Не удалось открыть Installers:\n\n{e}\n\n"
+               f"Смотри лог: plugins/gnome_gui/logs/errors.log",
+               win.body).pack(pady=20)
+
+
+def open_av(desktop):
+    win = GnomeWindow(desktop, "Антивирус хоста", 680, 480, 200, 120)
+    info = QTextEdit()
+    info.setReadOnly(True)
+    info.setStyleSheet("background:#0d0d0d; color:#e0e0e0; "
+                       "font-family:'Consolas','Monospace'; font-size:10pt;")
+    win.body_lay.addWidget(info)
+    try:
+        from av_bridge import AVBridge
+        av = AVBridge(log_fn=lambda m: log_write("antivirus", "INFO", m))
+        st = av.status()
+        info.setPlainText(
+            f"Антивирус главной ОС\n"
+            f"─────────────────────\n"
+            f"Активен:  {'да' if st['active'] else 'нет'}\n"
+            f"Название: {st.get('name','—')}\n"
+            f"Тип:      {st.get('type','—')}\n"
+            f"Путь:     {st.get('path','—')}\n\n"
+            f"Все файлы проверяются ДО попадания в песочницу."
+        )
+    except Exception as e:
+        info.setPlainText(f"Ошибка: {e}")
+
+
+def open_vpn(desktop):
+    win = GnomeWindow(desktop, "VPN", 620, 460, 200, 120)
+    info = QTextEdit()
+    info.setReadOnly(True)
+    info.setStyleSheet("background:#0d0d0d; color:#e0e0e0; "
+                       "font-family:'Consolas','Monospace'; font-size:10pt;")
+    win.body_lay.addWidget(info)
+    try:
+        from ovpn import OVPNClient
+        ovpn = OVPNClient(log_fn=lambda m: log_write("network", "INFO", m))
+        st = ovpn.status()
+        info.setPlainText(
+            f"OpenVPN-туннель ядра\n"
+            f"─────────────────────\n"
+            f"OpenVPN:      {st['openvpn'] or 'НЕ найден'}\n"
+            f"Конфиг:       {st['config'] or '—'}\n"
+            f"Auth:         {st['auth'] or '—'}\n"
+            f"Папка файлов: {st['files_dir']}\n"
+            f"Папка логов:  {st['logs_dir']}\n"
+            f"Подключение:  {'✅ АКТИВНО' if st['connected'] else '❌ нет'}\n"
+            f"Kill-switch:  {'вкл' if st['kill_switch'] else 'выкл'}\n"
+        )
+    except Exception as e:
+        info.setPlainText(f"Ошибка: {e}")
+
+
+# ============================================================
+# Главное окно
+# ============================================================
 class GnomeDesktop(QMainWindow):
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("SimpleOS — GNOME")
+        self.setWindowTitle("DreamUX")
         self.resize(1280, 800)
+        self.windows = []
+
         self.wallpaper = WallpaperWidget()
         self.setCentralWidget(self.wallpaper)
+
         self.desktop_area = QWidget(self.wallpaper)
         self.desktop_area.setGeometry(0, 32, 1280, 800 - 32)
         self.desktop_area.setStyleSheet("background: transparent;")
+
         self.panel = TopPanel(self.wallpaper)
         self.panel.setGeometry(0, 0, self.width(), 32)
+
         self.dock = Dock(self, self.wallpaper)
         self.dock.adjustSize()
         self._position_dock()
+
         QShortcut(QKeySequence("F12"), self).activated.connect(self._on_screenshot)
         QShortcut(QKeySequence("F11"), self).activated.connect(self._on_screen)
-        log_write("actions", "INFO", "GNOME запущен")
+
+        log_write("actions", "INFO", "DreamUX GUI запущен")
 
     def resizeEvent(self, e):
         super().resizeEvent(e)
@@ -917,7 +1076,7 @@ class GnomeDesktop(QMainWindow):
             Toast(self.wallpaper, f"📸 {name}")
 
     def closeEvent(self, e):
-        log_write("actions", "INFO", "GNOME закрыт")
+        log_write("actions", "INFO", "DreamUX GUI закрыт")
         super().closeEvent(e)
 
     # --- Приложения ---
@@ -926,90 +1085,43 @@ class GnomeDesktop(QMainWindow):
     def open_terminal(self):   open_terminal(self)
     def open_clocks(self):     open_clocks(self)
     def open_about(self):      open_about(self)
-
-    def open_browser(self):
-        try:
-            from browser import browser_open
-            browser_open(self)
-        except Exception as e:
-            log_write("errors", "ERROR", f"browser: {e}")
-            GnomeWindow(self, "Браузер", 400, 200, 300, 200)
-
-    def open_games(self):
-        try:
-            from games import games_open
-            games_open(self)
-        except Exception as e:
-            log_write("errors", "ERROR", f"games: {e}")
-            GnomeWindow(self, "Игры", 400, 200, 300, 200)
-
-    def open_installers(self):
-        try:
-            from installers import installers_open
-            installers_open(self)
-        except Exception as e:
-            log_write("errors", "ERROR", f"installers: {e}")
-            GnomeWindow(self, "Установщики", 400, 200, 300, 200)
-
-    def open_av(self):
-        win = GnomeWindow(self, "Антивирус хоста", 680, 480, 200, 120)
-        info = QTextEdit()
-        info.setReadOnly(True)
-        info.setStyleSheet("background:#0d0d0d; color:#e0e0e0; "
-                           "font-family:'Consolas','Monospace'; font-size:10pt;")
-        win.body_lay.addWidget(info)
-        try:
-            from av_bridge import AVBridge
-            av = AVBridge(log_fn=lambda m: log_write("antivirus", "INFO", m))
-            st = av.status()
-            info.setPlainText(
-                f"Антивирус главной ОС\n"
-                f"─────────────────────\n"
-                f"Активен:  {'да' if st['active'] else 'нет'}\n"
-                f"Название: {st.get('name','—')}\n"
-                f"Тип:      {st.get('type','—')}\n"
-                f"Путь:     {st.get('path','—')}\n\n"
-                f"Все файлы проверяются ДО попадания в песочницу."
-            )
-        except Exception as e:
-            info.setPlainText(f"Ошибка: {e}")
-        btn = QPushButton("🔄 Обновить")
-        btn.setObjectName("WinBtn")
-        win.body_lay.addWidget(btn)
-
-    def open_vpn(self):
-        win = GnomeWindow(self, "VPN", 620, 460, 200, 120)
-        info = QTextEdit()
-        info.setReadOnly(True)
-        info.setStyleSheet("background:#0d0d0d; color:#e0e0e0; "
-                           "font-family:'Consolas','Monospace'; font-size:10pt;")
-        win.body_lay.addWidget(info)
-        try:
-            from ovpn import OVPNClient
-            ovpn = OVPNClient(log_fn=lambda m: log_write("ovpn", "INFO", m))
-            st = ovpn.status()
-            info.setPlainText(
-                f"OpenVPN-туннель ядра\n"
-                f"─────────────────────\n"
-                f"OpenVPN:      {st['openvpn'] or 'НЕ найден'}\n"
-                f"Конфиг:       {st['config'] or '—'}\n"
-                f"Auth:         {st['auth'] or '—'}\n"
-                f"Папка файлов: {st['files_dir']}\n"
-                f"Папка логов:  {st['logs_dir']}\n"
-                f"Лог:          {st['log_file']}\n"
-                f"Debug:        {st['debug_log']}\n"
-                f"Подключение:  {'✅ АКТИВНО' if st['connected'] else '❌ нет'}\n"
-                f"Kill-switch:  {'вкл' if st['kill_switch'] else 'выкл'}\n"
-            )
-        except Exception as e:
-            info.setPlainText(f"Ошибка: {e}")
+    def open_browser(self):    open_browser(self)
+    def open_games(self):      open_games(self)
+    def open_installers(self): open_installers(self)
+    def open_av(self):         open_av(self)
+    def open_vpn(self):        open_vpn(self)
 
 
+# ============================================================
+# Запуск
+# ============================================================
 def main():
     app = QApplication(sys.argv)
     app.setStyleSheet(ADWAITA_DARK_QSS)
+
     win = GnomeDesktop()
-    win.show()
+    win.setWindowOpacity(0.0)
+
+    def on_splash_done():
+        screen = app.primaryScreen().availableGeometry()
+        w = min(1280, screen.width() - 40)
+        h = min(800, screen.height() - 40)
+        x = screen.x() + (screen.width() - w) // 2
+        y = screen.y() + (screen.height() - h) // 2
+        win.setGeometry(x, y, w, h)
+        win.setWindowOpacity(1.0)
+        win.show()
+        win.raise_()
+        win.activateWindow()
+
+    try:
+        from splash import SplashScreen
+        splash = SplashScreen(on_finished=on_splash_done, duration_ms=2500)
+        splash.start()
+    except Exception as e:
+        log_write("errors", "WARN", f"splash недоступен: {e}")
+        on_splash_done()
+
     sys.exit(app.exec())
 
 
