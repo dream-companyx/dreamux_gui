@@ -155,18 +155,18 @@ def is_path_allowed(path):
 
 def safe_read_text(path):
     if not is_path_allowed(path):
-        return "⛔ Файл вне песочницы."
+        return "Файл вне песочницы."
     try:
         size = os.path.getsize(path)
     except OSError:
         size = 0
     if size > MAX_TEXT_SIZE:
-        return f"⚠ Файл слишком большой: {size:,} байт"
+        return f"Файл слишком большой: {size:,} байт"
     try:
         with open(path, "r", encoding="utf-8", errors="replace") as f:
             return f.read(MAX_TEXT_SIZE)
     except Exception as e:
-        return f"⚠ Ошибка чтения: {e}"
+        return f"Ошибка чтения: {e}"
 
 
 def safe_read_bytes(path):
@@ -366,6 +366,7 @@ class Dock(QFrame):
             ("▶",  "Terminal",   desktop.open_terminal),
             ("🕒", "Clocks",     desktop.open_clocks),
             ("⚙",  "Settings",   desktop.open_settings),
+            ("🧰", "Remote",     desktop.open_remote),
             ("ℹ",  "About",      desktop.open_about),
         ]
         for icon, name, cb in apps:
@@ -569,7 +570,7 @@ def open_files(desktop):
         if not is_path_allowed(path):
             log_write("sandbox", "DANGER", "Открытие вне песочницы", path=path)
             vname.setText(os.path.basename(path))
-            vmedia.setText("⛔ Файл вне песочницы.")
+            vmedia.setText("Файл вне песочницы.")
             vbody.setCurrentWidget(vmedia)
             stack.setCurrentWidget(viewer)
             return
@@ -586,8 +587,8 @@ def open_files(desktop):
             log_write("quarantine", "DANGER", "Опасный файл", path=path, ext=ext)
             q = sandbox_quarantine(path)
             vtext.setPlainText(
-                f"⚠ Опасный файл: {name}\n"
-                f"🔒 В песочнице такие файлы НЕ запускаются.\n\n"
+                f"Опасный файл: {name}\n"
+                f"В песочнице такие файлы НЕ запускаются.\n\n"
                 f"Перемещён в карантин:\n{q}"
             )
             vbody.setCurrentWidget(vtext)
@@ -603,11 +604,11 @@ def open_files(desktop):
                 vimg.setPixmap(pix)
                 vbody.setCurrentWidget(vimg_scroll)
             else:
-                vmedia.setText(f"⚠ Не удалось: {name}")
+                vmedia.setText(f"Не удалось: {name}")
                 vbody.setCurrentWidget(vmedia)
         elif ext in MEDIA_EXT:
-            vmedia.setText(f"🎬 {name}\n\nРазмер: {size:,} байт\n"
-                           f"🔒 Медиа в песочнице не воспроизводится.")
+            vmedia.setText(f"{name}\n\nРазмер: {size:,} байт\n"
+                           f"Медиа в песочнице не воспроизводится.")
             vbody.setCurrentWidget(vmedia)
         else:
             raw = safe_read_bytes(path)
@@ -658,11 +659,11 @@ def open_files(desktop):
                 key=lambda e: (not e.is_dir(follow_symlinks=False), e.name.lower()),
             )
         except PermissionError:
-            err = QLabel("⛔ Доступ запрещён")
+            err = QLabel("Доступ запрещён")
             err.setStyleSheet("color:#e01b24; font-size:12pt;")
             grid.addWidget(err, 0, 0); return
         except Exception as e:
-            err = QLabel(f"⚠ {e}")
+            err = QLabel(f"Ошибка: {e}")
             err.setStyleSheet("color:#e01b24; font-size:12pt;")
             grid.addWidget(err, 0, 0); return
 
@@ -746,7 +747,7 @@ def open_files(desktop):
                       source=report.get("source"))
             if verdict == "malicious":
                 QMessageBox.warning(win, "Импорт",
-                    f"⛔ Антивирус хоста: MALICIOUS\n\n{report.get('issues')}")
+                    f"Антивирус хоста: MALICIOUS\n\n{report.get('issues')}")
                 return
         except Exception as e:
             log_write("antivirus", "WARN", f"AV недоступен: {e}")
@@ -759,7 +760,7 @@ def open_files(desktop):
             shutil.copy2(path, dst)
             log_write("actions", "INFO", "Импортировано", src=path, dst=dst)
             QMessageBox.information(win, "Импорт",
-                f"✅ Скопировано в песочницу:\n{dst}\n\nОригинал:\n{path}")
+                f"Скопировано в песочницу:\n{dst}\n\nОригинал:\n{path}")
             refresh_current()
         except Exception as e:
             QMessageBox.warning(win, "Импорт", f"Ошибка: {e}")
@@ -926,7 +927,6 @@ def open_about(desktop):
 
 
 def open_browser(desktop):
-    """Открыть Browser. Все ошибки пишутся в errors.log."""
     try:
         log_write("browser", "INFO", "Запуск Browser")
         from browser import browser_open
@@ -935,7 +935,7 @@ def open_browser(desktop):
         log_write("errors", "ERROR", f"browser: {e}",
                   traceback=traceback.format_exc()[:500])
         win = GnomeWindow(desktop, "Браузер", 620, 400, 200, 150)
-        QLabel(f"⛔ Не удалось открыть Browser:\n\n{e}\n\n"
+        QLabel(f"Не удалось открыть Browser:\n\n{e}\n\n"
                f"Смотри лог: plugins/gnome_gui/logs/errors.log",
                win.body).pack(pady=20)
 
@@ -949,7 +949,7 @@ def open_games(desktop):
         log_write("errors", "ERROR", f"games: {e}",
                   traceback=traceback.format_exc()[:500])
         win = GnomeWindow(desktop, "Игры", 620, 400, 200, 150)
-        QLabel(f"⛔ Не удалось открыть Games:\n\n{e}\n\n"
+        QLabel(f"Не удалось открыть Games:\n\n{e}\n\n"
                f"Смотри лог: plugins/gnome_gui/logs/errors.log",
                win.body).pack(pady=20)
 
@@ -963,7 +963,7 @@ def open_installers(desktop):
         log_write("errors", "ERROR", f"installers: {e}",
                   traceback=traceback.format_exc()[:500])
         win = GnomeWindow(desktop, "Установщики", 620, 400, 200, 150)
-        QLabel(f"⛔ Не удалось открыть Installers:\n\n{e}\n\n"
+        QLabel(f"Не удалось открыть Installers:\n\n{e}\n\n"
                f"Смотри лог: plugins/gnome_gui/logs/errors.log",
                win.body).pack(pady=20)
 
@@ -1011,11 +1011,25 @@ def open_vpn(desktop):
             f"Auth:         {st['auth'] or '—'}\n"
             f"Папка файлов: {st['files_dir']}\n"
             f"Папка логов:  {st['logs_dir']}\n"
-            f"Подключение:  {'✅ АКТИВНО' if st['connected'] else '❌ нет'}\n"
+            f"Подключение:  {'АКТИВНО' if st['connected'] else 'нет'}\n"
             f"Kill-switch:  {'вкл' if st['kill_switch'] else 'выкл'}\n"
         )
     except Exception as e:
         info.setPlainText(f"Ошибка: {e}")
+
+
+def open_remote(desktop):
+    try:
+        log_write("actions", "INFO", "Запуск RemoteTools")
+        from remote_tools_gui import remote_tools_open
+        remote_tools_open(desktop)
+    except Exception as e:
+        log_write("errors", "ERROR", f"remote_tools: {e}",
+                  traceback=traceback.format_exc()[:500])
+        win = GnomeWindow(desktop, "RemoteTools", 620, 400, 200, 150)
+        QLabel(f"Не удалось открыть RemoteTools:\n\n{e}\n\n"
+               f"Смотри лог: plugins/gnome_gui/logs/errors.log",
+               win.body).pack(pady=20)
 
 
 # ============================================================
@@ -1063,7 +1077,7 @@ class GnomeDesktop(QMainWindow):
     def _on_screenshot(self):
         p = take_screenshot(self)
         if p:
-            Toast(self.wallpaper, f"📸 {os.path.basename(p)}")
+            Toast(self.wallpaper, f"{os.path.basename(p)}")
 
     def _on_screen(self):
         screen = QApplication.primaryScreen()
@@ -1073,7 +1087,7 @@ class GnomeDesktop(QMainWindow):
         path = os.path.join(SCREENSHOTS_DIR, name)
         if screen.grabWindow(0).save(path, "PNG"):
             log_write("actions", "INFO", "Скриншот экрана", path=path)
-            Toast(self.wallpaper, f"📸 {name}")
+            Toast(self.wallpaper, f"{name}")
 
     def closeEvent(self, e):
         log_write("actions", "INFO", "DreamUX GUI закрыт")
@@ -1090,6 +1104,7 @@ class GnomeDesktop(QMainWindow):
     def open_installers(self): open_installers(self)
     def open_av(self):         open_av(self)
     def open_vpn(self):        open_vpn(self)
+    def open_remote(self):     open_remote(self)
 
 
 # ============================================================
