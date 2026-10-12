@@ -1,13 +1,19 @@
-"""Менеджер игр второстепенной ОС. Токен, allowlist, AV хоста."""
+"""Игры DreamUX. Токен + AV-проверка."""
 
 import os
 import sys
 import json
 import subprocess
-import shutil
+
+from PyQt6.QtWidgets import (
+    QWidget, QVBoxLayout, QHBoxLayout, QListWidget, QListWidgetItem,
+    QLabel, QTextEdit, QPushButton,
+)
+
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-KERNEL_DIR = os.path.dirname(HERE)
+PLUGIN_DIR = os.path.dirname(HERE)
+KERNEL_DIR = os.path.dirname(PLUGIN_DIR)
 SANDBOX_ROOT = os.path.join(KERNEL_DIR, "sandbox")
 GAMES_DIR = os.path.join(SANDBOX_ROOT, "games")
 
@@ -43,7 +49,6 @@ def launch_game(game_dir_name, netd, av=None):
     with open(m_path, "r", encoding="utf-8") as f:
         manifest = json.load(f)
 
-    # Проверка AV
     if av is not None:
         for fname in os.listdir(game_path):
             fpath = os.path.join(game_path, fname)
@@ -75,7 +80,7 @@ def launch_game(game_dir_name, netd, av=None):
     env["SIMPLEOS_GAME_TOKEN"] = token
     env["SIMPLEOS_GAME_DIR"] = game_path
     env["PYTHONPATH"] = os.pathsep.join(
-        [os.path.join(KERNEL_DIR, "plugins"), env.get("PYTHONPATH", "")]
+        [PLUGIN_DIR, env.get("PYTHONPATH", "")]
     )
     try:
         proc = subprocess.Popen([sys.executable, entry_path],
@@ -93,14 +98,13 @@ def games_open(desktop):
     global log_write
     from gnome_gui import GnomeWindow, log_write as lw
     log_write = lw
-    from netd import get_global_daemon
+    try:
+        from netd import get_global_daemon
+        netd = get_global_daemon()
+    except Exception:
+        netd = None
 
     win = GnomeWindow(desktop, "Игры", 780, 520, 160, 100)
-    from PyQt6.QtWidgets import (
-        QHBoxLayout, QVBoxLayout, QListWidget, QListWidgetItem,
-        QLabel, QTextEdit, QPushButton, QWidget,
-    )
-    from PyQt6.QtCore import Qt
 
     row = QHBoxLayout()
     sb = QListWidget()
@@ -144,9 +148,8 @@ def games_open(desktop):
         g = cur["g"]
         if not g:
             return
-        netd = get_global_daemon()
         if netd is None:
-            info.setPlainText("⛔ Ядро недоступно")
+            info.setPlainText("Ядро недоступно")
             return
         try:
             from av_bridge import AVBridge
