@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""GNOME-подобный интерфейс DreamUX. Fullscreen. Без lock screen."""
+"""GNOME-подобный интерфейс DreamUX. Splash + LockScreen + Desktop."""
 
 import os
 import sys
@@ -215,10 +215,9 @@ class Toast(QLabel):
 
 
 # ============================================================
-# Wallpaper + иконки на рабочем столе
+# Wallpaper + иконки
 # ============================================================
 class DesktopIcon(QFrame):
-    """Иконка на рабочем столе. Двойной клик — запуск."""
     def __init__(self, parent, icon, label, callback):
         super().__init__(parent)
         self.callback = callback
@@ -240,7 +239,7 @@ class DesktopIcon(QFrame):
         nm.setWordWrap(True)
         nm.setStyleSheet(
             "color: white; font-size: 9pt; background: transparent; "
-            "text-shadow: 1px 1px 2px black;"
+            "font-weight: bold;"
         )
         lay.addWidget(nm)
 
@@ -291,7 +290,6 @@ class WallpaperWidget(QWidget):
             self.desktop._show_desktop_menu(event.globalPos())
 
     def _find_apps_dir(self):
-        """Где dupfi ставит пакеты."""
         disk1 = os.path.join(KERNEL_DIR, "vfs", "disk1.vhd.data")
         if os.path.isdir(disk1):
             return os.path.join(disk1, "apps")
@@ -318,7 +316,6 @@ class WallpaperWidget(QWidget):
             ("⚙", "Настройки", desktop.open_settings),
         ]
 
-        # DreamyLauncher — если установлен через /dupfi
         for candidate in ("DreamyLauncher", "dreamylauncher"):
             launcher_dir = os.path.join(apps_dir, candidate)
             launcher_py = os.path.join(launcher_dir, "dreamylauncher.py")
@@ -1307,7 +1304,6 @@ class GnomeDesktop(QMainWindow):
     def open_remote(self):     open_remote(self)
 
     def open_dreamy_launcher(self, launcher_dir=None):
-        """Запуск DreamyLauncher из apps/ отдельным процессом."""
         import subprocess
 
         if launcher_dir is None:
@@ -1340,7 +1336,6 @@ class GnomeDesktop(QMainWindow):
         os.makedirs(os.path.join(home, ".minecraft"), exist_ok=True)
         os.makedirs(os.path.join(home, "plugins"), exist_ok=True)
 
-        # Копируем bridge + плагины из app-папки в home
         src_plugins = os.path.join(launcher_dir, "plugins")
         dst_plugins = os.path.join(home, "plugins")
         if os.path.isdir(src_plugins):
@@ -1384,9 +1379,24 @@ class GnomeDesktop(QMainWindow):
 
 
 # ============================================================
-# Запуск — БЕЗ lock screen, БЕЗ splash
+# Запуск — splash → lock screen → desktop
 # ============================================================
 def main():
+    # === Заглушаем Qt warnings про неизвестные CSS-свойства ===
+    from PyQt6.QtCore import qInstallMessageHandler
+    import sys as _sys
+
+    def _qt_msg_handler(mode, ctx, msg):
+        if "Unknown property" in msg:
+            return
+        try:
+            print(msg, file=_sys.stderr)
+        except Exception:
+            pass
+
+    qInstallMessageHandler(_qt_msg_handler)
+    # =======================================================
+
     try:
         from PyQt6.QtCore import Qt as QtCore
         QApplication.setAttribute(
@@ -1400,14 +1410,55 @@ def main():
 
     win = GnomeDesktop()
 
-    username = os.environ.get("SIMPLEOS_USERNAME") or "user"
+    def on_unlock(username):
+        log_write("actions", "INFO", f"Пользователь '{username}' вошёл")
+        win.showFullScreen()
+        win.raise_()
+        win.activateWindow()
 
-    log_write("actions", "INFO",
-              f"DreamUX GUI запущен под пользователем '{username}'")
+    # === Автовход без splash / lock screen ===
+    forced_user = os.environ.get("SIMPLEOS_USERNAME")
+    if forced_user:
+        log_write("actions", "INFO",
+                  f"Автовход под '{forced_user}' (SIMPLEOS_USERNAME)")
+        on_unlock(forced_user)
+        sys.exit(app.exec())
+    # ==========================================
 
-    win.showFullScreen()
-    win.raise_()
-    win.activateWindow()
+    # === Создаём lock screen заранее ===
+    lock = None
+    try:
+        sys.path.insert(0, HERE)
+        from lock_screen import LockScreen
+        lock = LockScreen(on_unlock=on_unlock)
+    except Exception as e:
+        log_write("errors", "ERROR", f"lock_screen (init): {e}")
+
+    def show_lock_or_desktop():
+        if lock is not None:
+            try:
+                lock.show_fullscreen()
+                return
+            except Exception as e:
+                log_write("errors", "ERROR", f"lock_screen show: {e}")
+        on_unlock("unknown")
+
+    # === Splash ===
+    splash_ok = False
+    try:
+        sys.path.insert(0, HERE)
+        from splash import SplashScreen
+
+        splash = SplashScreen(on_finished=show_lock_or_desktop,
+                              duration_ms=2500)
+        splash.start()
+        splash_ok = True
+    except Exception as e:
+        log_write("errors", "ERROR", f"splash: {e}")
+
+    # === Если splash не удалось — сразу lock screen ===
+    if not splash_ok:
+        show_lock_or_desktop()
 
     sys.exit(app.exec())
 
