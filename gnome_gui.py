@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""GNOME-подобный интерфейс DreamUX. Fullscreen."""
+"""GNOME-подобный интерфейс DreamUX. Fullscreen. Без lock screen."""
 
 import os
 import sys
@@ -215,12 +215,55 @@ class Toast(QLabel):
 
 
 # ============================================================
-# Wallpaper
+# Wallpaper + иконки на рабочем столе
 # ============================================================
+class DesktopIcon(QFrame):
+    """Иконка на рабочем столе. Двойной клик — запуск."""
+    def __init__(self, parent, icon, label, callback):
+        super().__init__(parent)
+        self.callback = callback
+        self.setFixedSize(90, 100)
+        self.setStyleSheet("background: transparent;")
+
+        lay = QVBoxLayout(self)
+        lay.setContentsMargins(4, 4, 4, 4)
+        lay.setSpacing(4)
+        lay.setAlignment(Qt.AlignmentFlag.AlignCenter)
+
+        ic = QLabel(icon)
+        ic.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        ic.setStyleSheet("font-size: 40pt; background: transparent;")
+        lay.addWidget(ic)
+
+        nm = QLabel(label)
+        nm.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        nm.setWordWrap(True)
+        nm.setStyleSheet(
+            "color: white; font-size: 9pt; background: transparent; "
+            "text-shadow: 1px 1px 2px black;"
+        )
+        lay.addWidget(nm)
+
+        self.setToolTip(label)
+
+    def mouseDoubleClickEvent(self, event):
+        if self.callback:
+            self.callback()
+
+    def enterEvent(self, event):
+        self.setStyleSheet(
+            "background: rgba(255,255,255,30); border-radius: 8px;"
+        )
+
+    def leaveEvent(self, event):
+        self.setStyleSheet("background: transparent;")
+
+
 class WallpaperWidget(QWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
         self.desktop = None
+        self.icons_layer = None
 
     def paintEvent(self, event):
         p = QPainter(self)
@@ -246,6 +289,54 @@ class WallpaperWidget(QWidget):
     def contextMenuEvent(self, event):
         if self.desktop:
             self.desktop._show_desktop_menu(event.globalPos())
+
+    def _find_apps_dir(self):
+        """Где dupfi ставит пакеты."""
+        disk1 = os.path.join(KERNEL_DIR, "vfs", "disk1.vhd.data")
+        if os.path.isdir(disk1):
+            return os.path.join(disk1, "apps")
+        return os.path.join(PLUGIN_DIR, "apps")
+
+    def setup_icons(self, desktop):
+        self.desktop = desktop
+
+        self.icons_layer = QWidget(self)
+        self.icons_layer.setStyleSheet("background: transparent;")
+        self.icons_layer.setGeometry(20, 40, 200, self.height() - 60)
+
+        grid = QVBoxLayout(self.icons_layer)
+        grid.setContentsMargins(0, 0, 0, 0)
+        grid.setSpacing(10)
+        grid.setAlignment(Qt.AlignmentFlag.AlignTop | Qt.AlignmentFlag.AlignLeft)
+
+        apps_dir = self._find_apps_dir()
+
+        apps = [
+            ("📁", "Файлы",     desktop.open_files),
+            ("🌐", "Браузер",   desktop.open_browser),
+            ("🖥", "Терминал",  desktop.open_terminal),
+            ("⚙", "Настройки", desktop.open_settings),
+        ]
+
+        # DreamyLauncher — если установлен через /dupfi
+        for candidate in ("DreamyLauncher", "dreamylauncher"):
+            launcher_dir = os.path.join(apps_dir, candidate)
+            launcher_py = os.path.join(launcher_dir, "dreamylauncher.py")
+            if os.path.isfile(launcher_py):
+                apps.insert(0, (
+                    "🌙", "DreamyLauncher",
+                    lambda d=launcher_dir: desktop.open_dreamy_launcher(d)
+                ))
+                break
+
+        for icon, label, cb in apps:
+            ic = DesktopIcon(self.icons_layer, icon, label, cb)
+            grid.addWidget(ic)
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        if self.icons_layer:
+            self.icons_layer.setGeometry(20, 40, 200, self.height() - 60)
 
 
 # ============================================================
@@ -1123,6 +1214,7 @@ class GnomeDesktop(QMainWindow):
 
         self.wallpaper = WallpaperWidget()
         self.wallpaper.desktop = self
+        self.wallpaper.setup_icons(self)
         self.setCentralWidget(self.wallpaper)
 
         self.panel = TopPanel(self.wallpaper)
@@ -1214,9 +1306,85 @@ class GnomeDesktop(QMainWindow):
     def open_vpn(self):        open_vpn(self)
     def open_remote(self):     open_remote(self)
 
+    def open_dreamy_launcher(self, launcher_dir=None):
+        """Запуск DreamyLauncher из apps/ отдельным процессом."""
+        import subprocess
+
+        if launcher_dir is None:
+            apps_dir = self.wallpaper._find_apps_dir()
+            for candidate in ("DreamyLauncher", "dreamylauncher"):
+                cand = os.path.join(apps_dir, candidate)
+                if os.path.isfile(os.path.join(cand, "dreamylauncher.py")):
+                    launcher_dir = cand
+                    break
+            else:
+                QMessageBox.warning(self, "DreamyLauncher",
+                                    "Не установлен.\n"
+                                    "Установи: /dupfi install <url>")
+                return
+
+        launcher_dir = os.path.abspath(launcher_dir)
+        launcher_py = os.path.join(launcher_dir, "dreamylauncher.py")
+
+        if not os.path.isfile(launcher_py):
+            QMessageBox.warning(self, "DreamyLauncher",
+                                f"Не найден:\n{launcher_py}")
+            return
+
+        disk1 = os.path.join(KERNEL_DIR, "vfs", "disk1.vhd.data")
+        if os.path.isdir(disk1):
+            home = os.path.join(disk1, "home", "dreamylauncher")
+        else:
+            home = os.path.join(KERNEL_DIR, "dreamy_home")
+        os.makedirs(home, exist_ok=True)
+        os.makedirs(os.path.join(home, ".minecraft"), exist_ok=True)
+        os.makedirs(os.path.join(home, "plugins"), exist_ok=True)
+
+        # Копируем bridge + плагины из app-папки в home
+        src_plugins = os.path.join(launcher_dir, "plugins")
+        dst_plugins = os.path.join(home, "plugins")
+        if os.path.isdir(src_plugins):
+            for f in os.listdir(src_plugins):
+                src = os.path.join(src_plugins, f)
+                dst = os.path.join(dst_plugins, f)
+                if os.path.isfile(src) and not os.path.exists(dst):
+                    try:
+                        shutil.copy2(src, dst)
+                    except Exception:
+                        pass
+
+        env = os.environ.copy()
+        env["DREAMY_HOME"] = home
+        env["PYTHONIOENCODING"] = "utf-8"
+        env["PYTHONUNBUFFERED"] = "1"
+        env["PYTHONPATH"] = os.pathsep.join(
+            [launcher_dir, env.get("PYTHONPATH", "")]
+        )
+
+        python = sys.executable
+        if os.name == "nt":
+            pyw = os.path.join(os.path.dirname(sys.executable), "pythonw.exe")
+            if os.path.isfile(pyw):
+                python = pyw
+
+        try:
+            proc = subprocess.Popen(
+                [python, launcher_py],
+                cwd=home,
+                env=env,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+            )
+            log_write("actions", "INFO", "DreamyLauncher запущен",
+                      pid=proc.pid)
+            Toast(self.wallpaper, f"🌙 DreamyLauncher (PID={proc.pid})")
+        except Exception as e:
+            log_write("errors", "ERROR", f"dreamylauncher: {e}")
+            QMessageBox.critical(self, "Ошибка", str(e))
+
 
 # ============================================================
-# Запуск
+# Запуск — БЕЗ lock screen, БЕЗ splash
 # ============================================================
 def main():
     try:
@@ -1232,20 +1400,14 @@ def main():
 
     win = GnomeDesktop()
 
-    def on_unlock(username):
-        log_write("actions", "INFO", f"Пользователь '{username}' вошёл")
-        win.showFullScreen()
-        win.raise_()
-        win.activateWindow()
+    username = os.environ.get("SIMPLEOS_USERNAME") or "user"
 
-    try:
-        sys.path.insert(0, HERE)
-        from lock_screen import LockScreen
-        lock = LockScreen(on_unlock=on_unlock)
-        lock.show_fullscreen()
-    except Exception as e:
-        log_write("errors", "ERROR", f"lock_screen: {e}")
-        on_unlock("unknown")
+    log_write("actions", "INFO",
+              f"DreamUX GUI запущен под пользователем '{username}'")
+
+    win.showFullScreen()
+    win.raise_()
+    win.activateWindow()
 
     sys.exit(app.exec())
 
