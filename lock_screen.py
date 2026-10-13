@@ -1,6 +1,10 @@
 """
 DreamUX Lock Screen — экран блокировки.
 Показывается при старте GUI. Требует пароль аккаунта.
+
+Ключевое:
+  - show_fullscreen() перекрывает панель задач Windows через SetWindowPos.
+  - Пароль берётся из users.json (уровень 0 = СИСТЕМА).
 """
 
 import os
@@ -29,11 +33,12 @@ class LockScreen(QWidget):
         self.setWindowFlags(
             Qt.WindowType.FramelessWindowHint
             | Qt.WindowType.WindowStaysOnTopHint
+            | Qt.WindowType.Tool
         )
 
         try:
             from PyQt6.QtWidgets import QApplication
-            screen = QApplication.primaryScreen().availableGeometry()
+            screen = QApplication.primaryScreen().geometry()
             self.setGeometry(screen)
         except Exception:
             self.resize(1280, 800)
@@ -151,14 +156,14 @@ class LockScreen(QWidget):
 
         for icon in ["🔄", "⏻"]:
             b = QPushButton(icon)
-            b.setFixedSize(48, 48)
+            b.setFixedSize(64, 64)
             b.setStyleSheet("""
                 QPushButton {
                     background-color: rgba(255,255,255,25);
                     color: #ffffff;
                     border: none;
-                    border-radius: 24px;
-                    font-size: 16pt;
+                    border-radius: 32px;
+                    font-size: 22pt;
                 }
                 QPushButton:hover {
                     background-color: rgba(255,255,255,50);
@@ -198,7 +203,6 @@ class LockScreen(QWidget):
             return
 
         if not os.path.isfile(USERS_FILE):
-            # Нет файла — пропускаем
             if self.on_unlock:
                 self.on_unlock(getpass.getuser())
             self.close()
@@ -242,14 +246,55 @@ class LockScreen(QWidget):
             pass
 
     def show_fullscreen(self):
-        """Совместимость с gnome_gui — показывает на весь экран."""
+        """Fullscreen поверх всего, включая панель задач Windows."""
+        # Флаги Qt
+        self.setWindowFlags(
+            Qt.WindowType.FramelessWindowHint
+            | Qt.WindowType.WindowStaysOnTopHint
+            | Qt.WindowType.Tool
+        )
+
+        # Геометрия — весь экран
         try:
             from PyQt6.QtWidgets import QApplication
-            screen = QApplication.primaryScreen().availableGeometry()
+            screen = QApplication.primaryScreen().geometry()
             self.setGeometry(screen)
         except Exception:
             pass
-        self.show()
+
+        # Показ на весь экран
+        self.showFullScreen()
         self.raise_()
         self.activateWindow()
         self.password.setFocus()
+
+        # WinAPI — поверх панели задач
+        if os.name == "nt":
+            self._make_topmost_windows()
+            # Повторный вызов через 100мс (для надёжности на медленных системах)
+            QTimer.singleShot(100, self._make_topmost_windows)
+
+    def _make_topmost_windows(self):
+        """Жёстко поднимает окно поверх всех, включая панель задач."""
+        try:
+            import ctypes
+
+            user32 = ctypes.windll.user32
+
+            HWND_TOPMOST = -1
+            SWP_NOMOVE = 0x0002
+            SWP_NOSIZE = 0x0001
+            SWP_SHOWWINDOW = 0x0040
+
+            hwnd = int(self.winId())
+            user32.SetWindowPos(
+                hwnd,
+                HWND_TOPMOST,
+                0, 0, 0, 0,
+                SWP_NOMOVE | SWP_NOSIZE | SWP_SHOWWINDOW,
+            )
+        except Exception as e:
+            try:
+                print(f"[LockScreen] WinAPI: {e}", flush=True)
+            except Exception:
+                pass
