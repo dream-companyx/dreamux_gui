@@ -1,16 +1,12 @@
 #!/usr/bin/env python3
-"""GNOME-подобный интерфейс DreamUX. Проводник в стиле Nautilus."""
+"""GNOME-подобный интерфейс DreamUX. Fullscreen."""
 
 import os
 import sys
 import json
 import shutil
-import traceback
 import datetime
 
-# ============================================================
-# Пути
-# ============================================================
 HERE = os.environ.get("SIMPLEOS_GNOME_DIR") or \
        os.path.dirname(os.path.abspath(__file__))
 PLUGIN_DIR = os.environ.get("SIMPLEOS_PLUGIN_DIR") or \
@@ -23,12 +19,11 @@ ASSETS_DIR = os.environ.get("SIMPLEOS_ASSETS_DIR") or \
              os.path.join(HERE, "assets")
 KERNEL_DIR = os.path.dirname(PLUGIN_DIR)
 
-# VFS пути
 VFS_ROOT = os.path.join(KERNEL_DIR, "vfs")
-DISK_0 = os.path.join(VFS_ROOT, "disk0")
+DISK_0 = os.path.join(VFS_ROOT, "disk0.vhd.data")
 DISK_0_SYSTEM = os.path.join(DISK_0, "system")
 DISK_0_BOOT   = os.path.join(DISK_0, "boot")
-DISK_1 = os.path.join(VFS_ROOT, "disk1")
+DISK_1 = os.path.join(VFS_ROOT, "disk1.vhd.data")
 
 for _p in (HERE, PLUGIN_DIR):
     if _p and _p not in sys.path:
@@ -41,9 +36,6 @@ for _p in (LOGS_ROOT, SCREENSHOTS_DIR, ASSETS_DIR):
         pass
 
 
-# ============================================================
-# PyQt6
-# ============================================================
 from PyQt6.QtCore import Qt, QTimer, QPoint, QPropertyAnimation, QEasingCurve
 from PyQt6.QtGui import (
     QColor, QPainter, QLinearGradient, QShortcut, QKeySequence, QPixmap,
@@ -53,7 +45,7 @@ from PyQt6.QtWidgets import (
     QLabel, QPushButton, QFrame, QListWidget, QListWidgetItem,
     QGridLayout, QScrollArea, QSizePolicy, QLineEdit, QTextEdit,
     QGraphicsOpacityEffect, QStackedWidget, QFileDialog, QMessageBox,
-    QTabWidget, QMenu,
+    QTabWidget, QMenu, QInputDialog,
 )
 
 
@@ -61,9 +53,8 @@ from PyQt6.QtWidgets import (
 # Логи
 # ============================================================
 LOG_FILES = {
-    "actions":    os.path.join(LOGS_ROOT, "actions.log"),
-    "errors":     os.path.join(LOGS_ROOT, "errors.log"),
-    "quarantine": os.path.join(LOGS_ROOT, "quarantine.log"),
+    "actions": os.path.join(LOGS_ROOT, "actions.log"),
+    "errors":  os.path.join(LOGS_ROOT, "errors.log"),
 }
 
 
@@ -99,26 +90,8 @@ def log_tail(category, n=200):
 
 
 # ============================================================
-# Песочница
+# Утилиты
 # ============================================================
-SANDBOX_ROOTS = [DISK_1] if os.path.isdir(DISK_1) else [KERNEL_DIR]
-
-
-def is_path_allowed(path):
-    try:
-        real = os.path.realpath(path)
-    except Exception:
-        return False
-    for root in SANDBOX_ROOTS:
-        try:
-            r = os.path.realpath(root)
-            if real == r or real.startswith(r + os.sep):
-                return True
-        except Exception:
-            continue
-    return False
-
-
 MAX_TEXT_SIZE = 2 * 1024 * 1024
 MAX_HEX_SIZE = 512
 
@@ -163,10 +136,10 @@ QPushButton#DockButton { background-color: rgba(255,255,255,20);
     border: none; border-radius: 12px; color: #ffffff;
     padding: 8px 4px; min-width: 56px; }
 QPushButton#DockButton:hover { background-color: rgba(255,255,255,50); }
-QFrame#Window { background-color: #242424; border: 1px solid #1a1a1a;
+QFrame#Window { background-color: #242424; border: 2px solid #1a1a1a;
     border-radius: 12px; }
 QFrame#HeaderBar { background-color: #303030;
-    border-top-left-radius: 12px; border-top-right-radius: 12px;
+    border-top-left-radius: 10px; border-top-right-radius: 10px;
     border-bottom: 1px solid #1a1a1a; }
 QLabel#WindowTitle { color: #ffffff; font-weight: 600; padding: 6px; }
 QPushButton#WinBtn { background: transparent; border: none;
@@ -180,8 +153,6 @@ QListWidget#Sidebar::item { padding: 8px 12px; border-radius: 8px;
 QListWidget#Sidebar::item:selected { background-color: #3584e4;
     color: #ffffff; }
 QListWidget#Sidebar::item:hover { background-color: rgba(255,255,255,25); }
-QLabel#FileIcon { font-size: 30pt; }
-QLabel#FileName { color: #ffffff; font-size: 9pt; }
 QLabel#H2 { font-size: 12pt; font-weight: 600; color: #ffffff; }
 QLineEdit, QTextEdit { background-color: #1a1a1a;
     border: 1px solid #3a3a3a; border-radius: 6px; padding: 6px;
@@ -198,21 +169,27 @@ QTabBar::tab { background: #2a2a2a; color: #dddddd;
 QTabBar::tab:selected { background: #3584e4; color: white; }
 """
 
+CONTEXT_MENU_QSS = """
+QMenu {
+    background-color: #2b2b2b;
+    color: #ffffff;
+    border-radius: 10px;
+    padding: 6px;
+    border: 1px solid #3a3a3a;
+}
+QMenu::item {
+    padding: 8px 32px 8px 24px;
+    border-radius: 6px;
+}
+QMenu::item:selected { background-color: #3584e4; }
+QMenu::separator { height: 1px; background-color: #3a3a3a;
+                    margin: 4px 8px; }
+"""
+
 
 # ============================================================
-# Toast / Скриншот
+# Toast
 # ============================================================
-def take_screenshot(window):
-    os.makedirs(SCREENSHOTS_DIR, exist_ok=True)
-    name = datetime.datetime.now().strftime("screenshot_%Y-%m-%d_%H-%M-%S.png")
-    path = os.path.join(SCREENSHOTS_DIR, name)
-    pix = window.grab()
-    if pix.save(path, "PNG"):
-        log_write("actions", "INFO", "Скриншот окна", path=path)
-        return path
-    return None
-
-
 class Toast(QLabel):
     def __init__(self, parent, text, timeout_ms=2200):
         super().__init__(parent)
@@ -238,9 +215,13 @@ class Toast(QLabel):
 
 
 # ============================================================
-# Обои / панель / док / окно
+# Wallpaper
 # ============================================================
 class WallpaperWidget(QWidget):
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.desktop = None
+
     def paintEvent(self, event):
         p = QPainter(self)
         p.setRenderHint(QPainter.RenderHint.Antialiasing)
@@ -262,7 +243,14 @@ class WallpaperWidget(QWidget):
                 p.drawPolygon(QPoint(x, y), QPoint(x + 180, y + 40),
                               QPoint(x + 140, y + 180), QPoint(x - 40, y + 140))
 
+    def contextMenuEvent(self, event):
+        if self.desktop:
+            self.desktop._show_desktop_menu(event.globalPos())
 
+
+# ============================================================
+# TopPanel
+# ============================================================
 class TopPanel(QFrame):
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -294,6 +282,9 @@ class TopPanel(QFrame):
         QTimer.singleShot(1000, self._tick)
 
 
+# ============================================================
+# Dock
+# ============================================================
 class Dock(QFrame):
     def __init__(self, desktop, parent=None):
         super().__init__(parent)
@@ -305,9 +296,9 @@ class Dock(QFrame):
         lay.setSpacing(6)
         apps = [
             ("📁", "Files",      desktop.open_files),
+            ("📦", "Installers", desktop.open_installers),
             ("🌐", "Browser",    desktop.open_browser),
             ("🎮", "Games",      desktop.open_games),
-            ("📦", "Installers", desktop.open_installers),
             ("🛡", "AV",         desktop.open_av),
             ("🔒", "VPN",        desktop.open_vpn),
             ("▶",  "Terminal",   desktop.open_terminal),
@@ -323,14 +314,22 @@ class Dock(QFrame):
             lay.addWidget(b)
 
 
+# ============================================================
+# GnomeWindow
+# ============================================================
 class GnomeWindow(QFrame):
     def __init__(self, desktop, title, w=560, h=400, x=120, y=100):
-        super().__init__(desktop.desktop_area)
+        super().__init__(desktop.wallpaper)
         self.desktop = desktop
         self.setObjectName("Window")
-        self.setGeometry(x, y, w, h)
+        self.resize(w, h)
+        self.move(x, y)
+        self.show()
         self.raise_()
+
         self._drag = None
+        if not hasattr(desktop, "windows"):
+            desktop.windows = []
         desktop.windows.append(self)
 
         outer = QVBoxLayout(self)
@@ -382,742 +381,4 @@ class GnomeWindow(QFrame):
             self.move(e.globalPosition().toPoint() - self._drag)
 
     def _ed(self, e):
-        self._drag = None
-
-    def closeEvent(self, event):
-        if self in self.desktop.windows:
-            self.desktop.windows.remove(self)
-        super().closeEvent(event)
-
-
-# ============================================================
-# FILES — проводник в стиле Nautilus
-# ============================================================
-def open_files(desktop):
-    log_write("actions", "INFO", "Открыто Files (Nautilus-стиль)")
-    win = GnomeWindow(desktop, "Файлы", 1100, 700, 80, 40)
-
-    state = {"history": [], "index": -1, "current_path": None}
-
-    # Верхняя панель
-    top = QHBoxLayout()
-    top.setSpacing(6)
-    top.setContentsMargins(4, 4, 4, 4)
-
-    b_back = QPushButton("←")
-    b_back.setObjectName("WinBtn")
-    b_back.setFixedSize(34, 34)
-    top.addWidget(b_back)
-
-    b_fwd = QPushButton("→")
-    b_fwd.setObjectName("WinBtn")
-    b_fwd.setFixedSize(34, 34)
-    top.addWidget(b_fwd)
-
-    b_up = QPushButton("↑")
-    b_up.setObjectName("WinBtn")
-    b_up.setFixedSize(34, 34)
-    top.addWidget(b_up)
-
-    breadcrumb = QLabel("Домой")
-    breadcrumb.setObjectName("H2")
-    breadcrumb.setStyleSheet(
-        "padding: 8px 12px; background: #2a2a2a; "
-        "border-radius: 8px; color: #ffffff;"
-    )
-    top.addWidget(breadcrumb, 1)
-
-    b_search = QPushButton("🔍")
-    b_search.setObjectName("WinBtn")
-    b_search.setFixedSize(34, 34)
-    top.addWidget(b_search)
-
-    b_view = QPushButton("⊞")
-    b_view.setObjectName("WinBtn")
-    b_view.setFixedSize(34, 34)
-    top.addWidget(b_view)
-
-    b_menu = QPushButton("≡")
-    b_menu.setObjectName("WinBtn")
-    b_menu.setFixedSize(34, 34)
-    top.addWidget(b_menu)
-
-    win.body_lay.addLayout(top)
-
-    # Основная область
-    main = QHBoxLayout()
-    main.setSpacing(0)
-    main.setContentsMargins(0, 0, 0, 0)
-
-    # Sidebar
-    sidebar = QListWidget()
-    sidebar.setObjectName("Sidebar")
-    sidebar.setFixedWidth(220)
-
-    sidebar_paths = {}
-
-    def add_section(title):
-        it = QListWidgetItem(title)
-        it.setFlags(Qt.ItemFlag.NoItemFlags)
-        it.setForeground(QColor("#888888"))
-        f = it.font()
-        f.setBold(True)
-        f.setPointSize(9)
-        it.setFont(f)
-        sidebar.addItem(it)
-
-    def add_item(label, path, icon="📁"):
-        it = QListWidgetItem(f"{icon}  {label}")
-        it.setToolTip(path)
-        sidebar.addItem(it)
-        sidebar_paths[sidebar.count() - 1] = path
-
-    add_section("ИЗБРАННОЕ")
-    if os.path.isdir(DISK_1):
-        home = os.path.join(DISK_1, "home")
-        if os.path.isdir(home):
-            add_item("Домой", home, "🏠")
-
-        for sub, icon, label in [
-            ("documents", "📄", "Документы"),
-            ("downloads", "⬇",  "Загрузки"),
-            ("music",     "🎵", "Музыка"),
-            ("pictures",  "🖼", "Изображения"),
-            ("videos",    "🎬", "Видео"),
-            ("packages",  "📦", "Пакеты"),
-            ("snapshots", "🗂", "Снапшоты"),
-        ]:
-            p = os.path.join(DISK_1, sub)
-            if os.path.isdir(p):
-                add_item(label, p, icon)
-
-    if os.path.isdir(DISK_0) or os.path.isdir(DISK_1):
-        add_section("ДИСКИ")
-
-        if os.path.isdir(DISK_0):
-            add_item("Раздел 0 — СИСТЕМА", DISK_0, "💽")
-            if os.path.isdir(DISK_0_SYSTEM):
-                it = QListWidgetItem("     ⚙  0.0 Система")
-                it.setToolTip(DISK_0_SYSTEM)
-                sidebar.addItem(it)
-                sidebar_paths[sidebar.count() - 1] = DISK_0_SYSTEM
-            if os.path.isdir(DISK_0_BOOT):
-                it = QListWidgetItem("     🚀  0.5 Загрузочный")
-                it.setToolTip(DISK_0_BOOT)
-                sidebar.addItem(it)
-                sidebar_paths[sidebar.count() - 1] = DISK_0_BOOT
-
-        if os.path.isdir(DISK_1):
-            add_item("Раздел 1 — ОСТАЛЬНОЕ", DISK_1, "💾")
-
-    if os.name == "nt":
-        add_section("ДРУГИЕ")
-        try:
-            user = os.path.expanduser("~")
-            for sub, icon, label in [
-                ("Desktop",   "🖥",  "Рабочий стол"),
-                ("Downloads", "⬇",  "Загрузки Win"),
-                ("Documents", "📄", "Документы Win"),
-            ]:
-                p = os.path.join(user, sub)
-                if os.path.isdir(p):
-                    add_item(label, p, icon)
-        except Exception:
-            pass
-
-    main.addWidget(sidebar)
-
-    # Правая часть
-    right = QWidget()
-    rl = QVBoxLayout(right)
-    rl.setContentsMargins(16, 16, 16, 16)
-    rl.setSpacing(8)
-
-    stack = QStackedWidget()
-
-    grid_w = QWidget()
-    grid = QGridLayout(grid_w)
-    grid.setSpacing(24)
-    grid.setContentsMargins(8, 8, 8, 8)
-    grid.setAlignment(Qt.AlignmentFlag.AlignTop | Qt.AlignmentFlag.AlignLeft)
-
-    scroll = QScrollArea()
-    scroll.setWidgetResizable(True)
-    scroll.setWidget(grid_w)
-    scroll.setStyleSheet("border: none; background: transparent;")
-    stack.addWidget(scroll)
-
-    # Просмотрщик
-    viewer = QWidget()
-    vl = QVBoxLayout(viewer)
-    vl.setContentsMargins(0, 0, 0, 0)
-
-    vhead = QHBoxLayout()
-    vname = QLabel(""); vname.setObjectName("H2")
-    vhead.addWidget(vname, 1)
-    vback = QPushButton("← Назад"); vback.setObjectName("WinBtn")
-    vhead.addWidget(vback)
-    vl.addLayout(vhead)
-
-    vbody = QStackedWidget()
-    vl.addWidget(vbody, 1)
-
-    vtext = QTextEdit()
-    vtext.setReadOnly(True)
-    vtext.setStyleSheet("background:#0d0d0d; color:#e0e0e0; "
-                        "font-family:'Consolas','Monospace'; font-size:10pt;")
-    vbody.addWidget(vtext)
-
-    vimg = QLabel()
-    vimg.setAlignment(Qt.AlignmentFlag.AlignCenter)
-    vimg.setStyleSheet("background:#0d0d0d;")
-    vimg_scroll = QScrollArea()
-    vimg_scroll.setWidgetResizable(True)
-    vimg_scroll.setWidget(vimg)
-    vbody.addWidget(vimg_scroll)
-
-    vmedia = QLabel()
-    vmedia.setAlignment(Qt.AlignmentFlag.AlignCenter)
-    vmedia.setStyleSheet("background:#0d0d0d; color:#9a9a9a; font-size:12pt;")
-    vmedia.setWordWrap(True)
-    vbody.addWidget(vmedia)
-
-    stack.addWidget(viewer)
-    rl.addWidget(stack, 1)
-
-    main.addWidget(right, 1)
-    win.body_lay.addLayout(main)
-
-    TEXT_EXT = {"txt","md","log","json","xml","yml","yaml","ini","cfg",
-                "toml","env","html","htm","css","sql","csv","tsv",
-                "dupfi"}
-    IMG_EXT = {"png","jpg","jpeg","gif","bmp","webp","tiff","ico","svg"}
-    MEDIA_EXT = {"mp3","wav","flac","ogg","m4a","aac","mp4","mkv","avi","mov"}
-
-    FOLDER_COLOR = "#62a0ea"
-    FILE_COLOR = "#ffffff"
-
-    def icon_for(name, is_dir):
-        if is_dir:
-            return "📁"
-        ext = name.lower().rsplit(".", 1)[-1] if "." in name else ""
-        return {
-            "txt":"📄","md":"📝","log":"📋","json":"📋","xml":"📋",
-            "png":"🖼","jpg":"🖼","jpeg":"🖼","gif":"🖼","svg":"🖼",
-            "mp3":"🎵","wav":"🎵","flac":"🎵",
-            "mp4":"🎬","mkv":"🎬","avi":"🎬",
-            "pdf":"📕","doc":"📘","docx":"📘",
-            "xls":"📗","xlsx":"📗","ppt":"📙","pptx":"📙",
-            "zip":"🗜","rar":"🗜","7z":"🗜",
-            "duap":"🗜","dupfi":"📦",
-            "py":"🐍","js":"📜","html":"🌐","css":"🎨",
-            "exe":"⚙","sh":"⚙","bat":"⚙",
-            "apk":"📱","iso":"💿",
-        }.get(ext, "📄")
-
-    def open_file_internal(path):
-        ext = path.rsplit(".", 1)[-1].lower() if "." in os.path.basename(path) else ""
-        name = os.path.basename(path)
-        vname.setText(name)
-
-        if ext == "dupfi":
-            _open_with_installer(desktop, path, kind="dupfi")
-            return
-        if ext == "duap":
-            _open_with_installer(desktop, path, kind="duap")
-            return
-
-        if ext in TEXT_EXT or ext == "":
-            vtext.setPlainText(safe_read_text(path))
-            vbody.setCurrentWidget(vtext)
-        elif ext in IMG_EXT:
-            pix = QPixmap(path)
-            if not pix.isNull():
-                vimg.setPixmap(pix)
-                vbody.setCurrentWidget(vimg_scroll)
-            else:
-                vmedia.setText(f"Не удалось загрузить: {name}")
-                vbody.setCurrentWidget(vmedia)
-        elif ext in MEDIA_EXT:
-            size = os.path.getsize(path)
-            vmedia.setText(f"🎬 {name}\n\nРазмер: {size:,} байт")
-            vbody.setCurrentWidget(vmedia)
-        else:
-            raw = safe_read_bytes(path)
-            lines = []
-            for off in range(0, len(raw), 16):
-                chunk = raw[off:off+16]
-                hs = " ".join(f"{b:02x}" for b in chunk)
-                asc = "".join(chr(b) if 32 <= b < 127 else "." for b in chunk)
-                lines.append(f"{off:08x}  {hs:<47}  {asc}")
-            vtext.setPlainText(f"Бинарный: {name}\n\n" + "\n".join(lines))
-            vbody.setCurrentWidget(vtext)
-
-        stack.setCurrentWidget(viewer)
-
-    def show_grid():
-        stack.setCurrentWidget(scroll)
-    vback.clicked.connect(show_grid)
-
-    def render_dir(path):
-        state["current_path"] = path
-
-        name = os.path.basename(path.rstrip(os.sep)) or path
-        if path == os.path.join(DISK_1, "home"):
-            breadcrumb.setText("🏠  Домой")
-        elif path == DISK_0:
-            breadcrumb.setText("💽  Раздел 0 — СИСТЕМА")
-        elif path == DISK_1:
-            breadcrumb.setText("💾  Раздел 1 — ОСТАЛЬНОЕ")
-        else:
-            breadcrumb.setText(f"📁  {name}")
-        breadcrumb.setToolTip(path)
-
-        while grid.count():
-            it = grid.takeAt(0)
-            w = it.widget()
-            if w:
-                w.deleteLater()
-
-        try:
-            entries = sorted(
-                os.scandir(path),
-                key=lambda e: (not e.is_dir(follow_symlinks=False),
-                               e.name.lower()),
-            )
-        except PermissionError:
-            err = QLabel("⛔ Доступ запрещён")
-            err.setStyleSheet("color:#e01b24; font-size:12pt;")
-            grid.addWidget(err, 0, 0)
-            return
-        except Exception as e:
-            err = QLabel(f"⚠ Ошибка: {e}")
-            err.setStyleSheet("color:#e01b24; font-size:12pt;")
-            grid.addWidget(err, 0, 0)
-            return
-
-        col = r = 0
-        for entry in entries:
-            try:
-                is_dir = entry.is_dir(follow_symlinks=False)
-            except OSError:
-                is_dir = False
-
-            cell = QWidget()
-            cell.setFixedSize(110, 110)
-            cl = QVBoxLayout(cell)
-            cl.setContentsMargins(4, 4, 4, 4)
-            cl.setSpacing(4)
-            cl.setAlignment(Qt.AlignmentFlag.AlignCenter)
-
-            ic = QLabel(icon_for(entry.name, is_dir))
-            ic.setAlignment(Qt.AlignmentFlag.AlignCenter)
-            ic.setStyleSheet(
-                f"font-size:44pt; color:{FOLDER_COLOR if is_dir else FILE_COLOR};"
-            )
-            cl.addWidget(ic)
-
-            nm = QLabel(entry.name)
-            nm.setAlignment(Qt.AlignmentFlag.AlignCenter)
-            nm.setWordWrap(True)
-            nm.setStyleSheet("color:#ffffff; font-size:9pt;")
-            nm.setFixedHeight(30)
-            cl.addWidget(nm)
-
-            def mh(e=entry, is_dir=is_dir, base=path):
-                def _h(ev):
-                    p = os.path.join(base, e.name)
-                    if is_dir:
-                        navigate(p)
-                    else:
-                        open_file_internal(p)
-                return _h
-            cell.mouseDoubleClickEvent = mh()
-
-            def cm(e=entry, is_dir=is_dir, base=path):
-                def _h(ev):
-                    p = os.path.join(base, e.name)
-                    menu = QMenu(cell)
-                    menu.setStyleSheet("""
-                        QMenu { background: #2b2b2b; color: #ffffff;
-                                border-radius: 8px; padding: 6px;
-                                border: 1px solid #3a3a3a; }
-                        QMenu::item { padding: 8px 24px; border-radius: 4px; }
-                        QMenu::item:selected { background: #3a3a3a; }
-                        QMenu::separator { height: 1px; background: #3a3a3a;
-                                            margin: 4px 8px; }
-                    """)
-                    menu.addAction("📂  Открыть",
-                                   lambda: (navigate(p) if is_dir
-                                            else open_file_internal(p)))
-                    menu.addSeparator()
-                    menu.addAction("📋  Копировать путь",
-                                   lambda: QApplication.clipboard().setText(p))
-                    menu.exec_(ev.globalPosition().toPoint())
-                return _h
-            cell.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
-            cell.customContextMenuRequested = cm()
-
-            grid.addWidget(cell, r, col)
-            col += 1
-            if col >= 7:
-                col = 0
-                r += 1
-
-    def navigate(path, add_history=True):
-        path = os.path.abspath(path)
-        if not os.path.isdir(path):
-            return
-        if add_history:
-            state["history"] = state["history"][:state["index"]+1]
-            state["history"].append(path)
-            state["index"] = len(state["history"]) - 1
-        render_dir(path)
-        show_grid()
-
-    def go_back():
-        if state["index"] > 0:
-            state["index"] -= 1
-            render_dir(state["history"][state["index"]])
-            show_grid()
-
-    def go_fwd():
-        if state["index"] < len(state["history"]) - 1:
-            state["index"] += 1
-            render_dir(state["history"][state["index"]])
-            show_grid()
-
-    def go_up():
-        cur = state["history"][state["index"]] if state["history"] else "/"
-        parent = os.path.dirname(cur.rstrip(os.sep)) or os.sep
-        if parent != cur:
-            navigate(parent)
-
-    b_back.clicked.connect(go_back)
-    b_fwd.clicked.connect(go_fwd)
-    b_up.clicked.connect(go_up)
-
-    def on_sidebar(item):
-        idx = sidebar.row(item)
-        p = sidebar_paths.get(idx)
-        if p:
-            navigate(p)
-    sidebar.itemClicked.connect(on_sidebar)
-
-    if os.path.isdir(DISK_1):
-        home = os.path.join(DISK_1, "home")
-        if os.path.isdir(home):
-            navigate(home)
-        else:
-            navigate(DISK_1)
-    elif os.path.isdir(DISK_0):
-        navigate(DISK_0)
-    else:
-        navigate(KERNEL_DIR)
-
-
-def _open_with_installer(desktop, path, kind="dupfi"):
-    try:
-        from plugins.dupfi import slash_dupfi
-
-        class FakeKernel:
-            slash_commands = {}
-
-        fake = FakeKernel()
-        if kind == "dupfi":
-            slash_dupfi(fake, ["install", path])
-        else:
-            slash_dupfi(fake, ["info", path])
-    except Exception as e:
-        log_write("errors", "ERROR", f"installer: {e}")
-        QMessageBox.warning(None, "Paket Installer", str(e))
-
-
-# ============================================================
-# Остальные приложения
-# ============================================================
-def open_terminal(desktop):
-    win = GnomeWindow(desktop, "Терминал", 640, 400, 160, 120)
-    out = QTextEdit()
-    out.setReadOnly(True)
-    out.setStyleSheet("background:#0d0d0d; color:#e0e0e0; "
-                      "font-family:'Consolas','Monospace'; font-size:10pt;")
-    out.append("DreamUX Terminal\n")
-    win.body_lay.addWidget(out, 1)
-    inp = QLineEdit()
-    inp.setPlaceholderText("user@dreamux:~$")
-    win.body_lay.addWidget(inp)
-
-    def on_enter():
-        cmd = inp.text().strip()
-        if not cmd:
-            return
-        inp.clear()
-        out.append(f"$ {cmd}")
-        if cmd == "help":
-            out.append("help, disks, whoami, date, clear")
-        elif cmd == "disks":
-            try:
-                from plugins.vfs import format_info
-                out.append(format_info())
-            except Exception as e:
-                out.append(str(e))
-        elif cmd == "whoami":
-            import getpass
-            out.append(getpass.getuser())
-        elif cmd == "date":
-            out.append(datetime.datetime.now().strftime("%c"))
-        elif cmd == "clear":
-            out.clear()
-        else:
-            out.append(f"command not found: {cmd}")
-
-    inp.returnPressed.connect(on_enter)
-    inp.setFocus()
-
-
-def open_clocks(desktop):
-    win = GnomeWindow(desktop, "Часы", 380, 260, 380, 180)
-    t = QLabel(); t.setStyleSheet("font-size:42pt; font-weight:200; color:#3584e4;")
-    t.setAlignment(Qt.AlignmentFlag.AlignCenter)
-    win.body_lay.addWidget(t)
-    d = QLabel(); d.setStyleSheet("color:#9a9a9a; font-size:11pt;")
-    d.setAlignment(Qt.AlignmentFlag.AlignCenter)
-    win.body_lay.addWidget(d)
-
-    def tick():
-        now = datetime.datetime.now()
-        t.setText(now.strftime("%H:%M:%S"))
-        d.setText(now.strftime("%A, %d %B %Y"))
-        QTimer.singleShot(500, tick)
-    tick()
-
-
-def open_about(desktop):
-    win = GnomeWindow(desktop, "О системе", 420, 300, 340, 200)
-    l1 = QLabel("DreamUX"); l1.setStyleSheet("font-size:24pt; font-weight:700;")
-    l1.setAlignment(Qt.AlignmentFlag.AlignCenter)
-    win.body_lay.addWidget(l1)
-    l2 = QLabel("IDEAS INTO EXPERIENCES")
-    l2.setStyleSheet("color:#9a9a9a; letter-spacing:3px;")
-    l2.setAlignment(Qt.AlignmentFlag.AlignCenter)
-    win.body_lay.addWidget(l2)
-    l3 = QLabel("Версия 2.5.0\nPyQt6 · Adwaita dark")
-    l3.setStyleSheet("color:#9a9a9a; font-size:9pt;")
-    l3.setAlignment(Qt.AlignmentFlag.AlignCenter)
-    win.body_lay.addWidget(l3)
-
-
-def open_settings(desktop):
-    win = GnomeWindow(desktop, "Настройки", 780, 500, 130, 80)
-    tabs = QTabWidget()
-    win.body_lay.addWidget(tabs)
-
-    tab = QWidget()
-    lay = QVBoxLayout(tab)
-    lay.addWidget(QLabel("<h2>DreamUX 2.5.0</h2>"))
-    lay.addWidget(QLabel("VFS: 2 раздела"))
-    lay.addWidget(QLabel("PyQt6 · Adwaita dark"))
-    lay.addStretch()
-    tabs.addTab(tab, "О системе")
-
-    tab2 = QWidget()
-    lay2 = QVBoxLayout(tab2)
-    info = QTextEdit()
-    info.setReadOnly(True)
-    info.setStyleSheet("background:#0d0d0d; color:#e0e0e0; "
-                       "font-family:'Consolas','Monospace'; font-size:10pt;")
-    try:
-        from plugins.vfs import format_info
-        info.setPlainText(format_info())
-    except Exception as e:
-        info.setPlainText(f"Ошибка: {e}")
-    lay2.addWidget(info)
-    tabs.addTab(tab2, "Диски")
-
-
-def open_browser(desktop):
-    try:
-        from browser import browser_open
-        browser_open(desktop)
-    except Exception as e:
-        log_write("errors", "ERROR", f"browser: {e}")
-
-
-def open_games(desktop):
-    try:
-        from games import games_open
-        games_open(desktop)
-    except Exception as e:
-        log_write("errors", "ERROR", f"games: {e}")
-
-
-def open_installers(desktop):
-    try:
-        from installers import installers_open
-        installers_open(desktop)
-    except Exception as e:
-        log_write("errors", "ERROR", f"installers: {e}")
-
-
-def open_av(desktop):
-    win = GnomeWindow(desktop, "Антивирус", 680, 480, 200, 120)
-    info = QTextEdit()
-    info.setReadOnly(True)
-    info.setStyleSheet("background:#0d0d0d; color:#e0e0e0; "
-                       "font-family:'Consolas','Monospace'; font-size:10pt;")
-    win.body_lay.addWidget(info)
-    try:
-        from av_bridge import AVBridge
-        av = AVBridge(log_fn=lambda m: log_write("actions", "INFO", m))
-        st = av.status()
-        info.setPlainText(
-            f"Антивирус главной ОС\n"
-            f"─────────────────────\n"
-            f"Активен:  {'да' if st['active'] else 'нет'}\n"
-            f"Название: {st.get('name','—')}\n"
-            f"Тип:      {st.get('type','—')}\n"
-        )
-    except Exception as e:
-        info.setPlainText(f"Ошибка: {e}")
-
-
-def open_vpn(desktop):
-    win = GnomeWindow(desktop, "VPN", 620, 460, 200, 120)
-    info = QTextEdit()
-    info.setReadOnly(True)
-    info.setStyleSheet("background:#0d0d0d; color:#e0e0e0; "
-                       "font-family:'Consolas','Monospace'; font-size:10pt;")
-    win.body_lay.addWidget(info)
-    try:
-        from ovpn import OVPNClient
-        ovpn = OVPNClient(log_fn=lambda m: log_write("actions", "INFO", m))
-        st = ovpn.status()
-        info.setPlainText(
-            f"OpenVPN\n"
-            f"─────────────────────\n"
-            f"OpenVPN:      {st['openvpn'] or 'НЕ найден'}\n"
-            f"Конфиг:       {st['config'] or '—'}\n"
-            f"Подключение:  {'АКТИВНО' if st['connected'] else 'нет'}\n"
-        )
-    except Exception as e:
-        info.setPlainText(f"Ошибка: {e}")
-
-
-def open_remote(desktop):
-    try:
-        from remote_tools_gui import remote_tools_open
-        remote_tools_open(desktop)
-    except Exception as e:
-        log_write("errors", "ERROR", f"remote: {e}")
-
-
-# ============================================================
-# Главное окно
-# ============================================================
-class GnomeDesktop(QMainWindow):
-    def __init__(self):
-        super().__init__()
-        self.setWindowTitle("DreamUX")
-        self.resize(1280, 800)
-        self.windows = []
-
-        self.wallpaper = WallpaperWidget()
-        self.setCentralWidget(self.wallpaper)
-
-        self.desktop_area = QWidget(self.wallpaper)
-        self.desktop_area.setGeometry(0, 32, 1280, 800 - 32)
-        self.desktop_area.setStyleSheet("background: transparent;")
-
-        self.panel = TopPanel(self.wallpaper)
-        self.panel.setGeometry(0, 0, self.width(), 32)
-
-        self.dock = Dock(self, self.wallpaper)
-        self.dock.adjustSize()
-        self._position_dock()
-
-        QShortcut(QKeySequence("F12"), self).activated.connect(self._on_screenshot)
-        QShortcut(QKeySequence("F11"), self).activated.connect(self._on_screen)
-
-        log_write("actions", "INFO", "DreamUX GUI запущен")
-
-    def resizeEvent(self, e):
-        super().resizeEvent(e)
-        self.panel.setGeometry(0, 0, self.width(), 32)
-        self.desktop_area.setGeometry(0, 32, self.width(), self.height() - 32)
-        self._position_dock()
-
-    def _position_dock(self):
-        self.dock.adjustSize()
-        x = (self.width() - self.dock.width()) // 2
-        y = self.height() - self.dock.height() - 12
-        self.dock.move(x, y)
-        self.dock.raise_()
-
-    def _on_screenshot(self):
-        p = take_screenshot(self)
-        if p:
-            Toast(self.wallpaper, f"{os.path.basename(p)}")
-
-    def _on_screen(self):
-        screen = QApplication.primaryScreen()
-        if not screen:
-            return
-        name = datetime.datetime.now().strftime("screen_%Y-%m-%d_%H-%M-%S.png")
-        path = os.path.join(SCREENSHOTS_DIR, name)
-        if screen.grabWindow(0).save(path, "PNG"):
-            log_write("actions", "INFO", "Скриншот экрана", path=path)
-            Toast(self.wallpaper, f"{name}")
-
-    def closeEvent(self, e):
-        log_write("actions", "INFO", "DreamUX GUI закрыт")
-        super().closeEvent(e)
-
-    def open_files(self):      open_files(self)
-    def open_settings(self):   open_settings(self)
-    def open_terminal(self):   open_terminal(self)
-    def open_clocks(self):     open_clocks(self)
-    def open_about(self):      open_about(self)
-    def open_browser(self):    open_browser(self)
-    def open_games(self):      open_games(self)
-    def open_installers(self): open_installers(self)
-    def open_av(self):         open_av(self)
-    def open_vpn(self):        open_vpn(self)
-    def open_remote(self):     open_remote(self)
-
-
-# ============================================================
-# Запуск
-# ============================================================
-def main():
-    app = QApplication(sys.argv)
-    app.setStyleSheet(ADWAITA_DARK_QSS)
-
-    win = GnomeDesktop()
-    win.setWindowOpacity(0.0)
-
-    def on_splash_done():
-        screen = app.primaryScreen().availableGeometry()
-        w = min(1280, screen.width() - 40)
-        h = min(800, screen.height() - 40)
-        x = screen.x() + (screen.width() - w) // 2
-        y = screen.y() + (screen.height() - h) // 2
-        win.setGeometry(x, y, w, h)
-        win.setWindowOpacity(1.0)
-        win.show()
-        win.raise_()
-        win.activateWindow()
-
-    try:
-        from splash import SplashScreen
-        splash = SplashScreen(on_finished=on_splash_done, duration_ms=2500)
-        splash.start()
-    except Exception as e:
-        log_write("errors", "WARN", f"splash недоступен: {e}")
-        on_splash_done()
-
-    sys.exit(app.exec())
-
-
-if __name__ == "__main__":
-    main()
+        self._drag
