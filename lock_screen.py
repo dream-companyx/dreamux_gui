@@ -240,3 +240,16 @@ class LockScreen(QWidget):
             self._shake_anim = anim
         except Exception:
             pass
+
+    def show_fullscreen(self):
+        """Совместимость с gnome_gui — показывает на весь экран."""
+        try:
+            from PyQt6.QtWidgets import QApplication
+            screen = QApplication.primaryScreen().availableGeometry()
+            self.setGeometry(screen)
+        except Exception:
+            pass
+        self.show()
+        self.raise_()
+        self.activateWindow()
+        self.password.setFocus()
